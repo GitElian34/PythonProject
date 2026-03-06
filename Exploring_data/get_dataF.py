@@ -43,6 +43,29 @@ def analyse_point(lat, lon, date):
     debut_jour = date_ts
     fin_jour = date_ts + pd.Timedelta(days=1)  # jour suivant à minuit
     date_debut_10j = date_ts - pd.Timedelta(days=10)
+    annee10j, mois10j, _ = str(date_debut_10j).split('-')
+    if  mois10j != mois :
+
+        nfichier = f'/home/sar_hydro/STUDIES/EtudesEB/PythonProject/data/ERA5/usable_data_LAND_France/{annee10j}/{mois10j}/data_0.nc'
+        if os.path.exists(nfichier):
+            dsy = xr.open_dataset(nfichier)
+            print(f"✅ Fichier chargé: {nfichier}")
+            dsy['t2m_c'] = dsy['t2m'] - 273.15
+            dsy['tp_mm'] = dsy['tp'] * 1000
+            temp_point = xr.concat([dsy['t2m_c'].sel(latitude=lat, longitude=lon, method='nearest'),temp_point,
+                                    ],
+                                   dim='valid_time')
+            precip_point = xr.concat([dsy['tp_mm'].sel(latitude=lat, longitude=lon, method='nearest'),precip_point,
+                                      ],
+                                     dim='valid_time')
+            print("PRECIP POINT :")
+            print(precip_point)
+            print("TEMP POINT :\n")
+            print(temp_point)
+        else:
+            print(f"❌ Fichier non trouvé: {nfichier}")
+            print(f"Vérifie le chemin: /data/ERA5/usable_data_LAND_France/{annee10j}/{mois10j}/")
+            return None  # ou raise Exception selon le contexte
 
     # === PRÉCIPITATIONS ===
     precip_jour = precip_point.sel(valid_time=slice(debut_jour, fin_jour)).mean().values  # moyenne sur le jour
@@ -88,5 +111,5 @@ if __name__ == "__main__":
     analyse_point(
         lat=43.5,
         lon=2.5,
-        date='2016-05-13'
+        date='2016-07-03'
     )
