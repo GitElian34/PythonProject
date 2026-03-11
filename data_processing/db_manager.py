@@ -6,15 +6,49 @@ Gestionnaire de base de données pour les stations hydrologiques
 
 import sqlite3
 
+
+def create_climate_table(cursor):
+    """
+    Crée la table climate_data pour stocker les données météo associées aux mesures
+
+    Args:
+        conn: Connexion SQLite
+    """
+
+    cursor.execute('''
+CREATE TABLE IF NOT EXISTS climate_data (
+    climate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    measurement_id INTEGER NOT NULL,
+    station_code TEXT NOT NULL,
+    measure_date DATE NOT NULL,
+    temp_min_jour DECIMAL(5,2),
+    temp_max_jour DECIMAL(5,2),
+    temp_moy_jour DECIMAL(5,2),
+    precip_jour DECIMAL(8,2),
+    temp_moy_10j DECIMAL(5,2),
+    precip_moy_10j DECIMAL(8,2),
+    date_debut_10j DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (measurement_id) REFERENCES measurements(measurement_id),
+    FOREIGN KEY (station_code) REFERENCES stations(station_code)
+)
+''')
+
+
+
+
+
+
 def create_tables(conn):
     """
+
     Crée les tables stations et measurements si elles n'existent pas
 
     Args:
         conn: Connexion SQLite
     """
     cursor = conn.cursor()
-
+    create_climate_table(cursor)
     # Table stations
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS stations (
@@ -204,6 +238,235 @@ def insert_station(conn, metadata, measurements):
     conn.commit()
     print(f"✅ Station {station_code} importée avec {len(measurements)} mesures")
     return True
+
+
+def insert_climate_data(conn, station_code, measure_date, climate_dict, date_debut_10j):
+    """
+    Insère les données climatiques pour une mesure spécifique (sans doublons)
+
+    Args:
+        conn: Connexion SQLite
+        station_code (str): Code de la station
+        measure_date (str): Date de la mesure (YYYY-MM-DD)
+        climate_dict (dict): Dictionnaire avec les valeurs climatiques
+        date_debut_10j (str): Date de début de la période 10j
+        date_fin_10j (str): Date de fin de la période 10j
+    """
+    cursor = conn.cursor()
+
+    # 1. D'abord, récupérer le measurement_id correspondant
+    cursor.execute('''
+                   SELECT measurement_id
+                   FROM measurements
+                   WHERE station_code = ?
+                     AND measure_date = ?
+                   ORDER BY measurement_id LIMIT 1
+                   ''', (station_code, measure_date))
+
+    result = cursor.fetchone()
+    if not result:
+        print(f"❌ Aucune mesure trouvée pour {station_code} le {measure_date}")
+        return False
+
+    measurement_id = result[0]
+
+    # 2. Vérifier si une entrée existe déjà pour ce measurement_id
+    cursor.execute('''
+                   SELECT climate_id
+                   FROM climate_data
+                   WHERE measurement_id = ?
+                   ''', (measurement_id,))
+
+    existing = cursor.fetchone()
+
+    if existing:
+        print(
+            f"⚠️  Données déjà existantes pour {station_code} le {measure_date} (ID: {existing[0]}) - Mise à jour ignorée")
+        return False
+
+    # 3. Insérer les données climatiques (pas de doublon)
+    cursor.execute('''
+                   INSERT INTO climate_data (measurement_id,
+                                             station_code,
+                                             measure_date,
+                                             temp_min_jour,
+                                             temp_max_jour,
+                                             temp_moy_jour,
+                                             precip_jour,
+                                             temp_moy_10j,
+                                             precip_moy_10j,
+                                             date_debut_10j)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ''', (
+                       measurement_id,
+                       station_code,
+                       measure_date,
+                       float(climate_dict['temp_min_jour']),
+                       float(climate_dict['temp_max_jour']),
+                       float(climate_dict['temp_moy_jour']),
+                       float(climate_dict['precip_jour']),
+                       float(climate_dict['temp_moy10j']),
+                       float(climate_dict['precip_moy10j']),
+                       date_debut_10j
+                   ))
+
+    conn.commit()
+    print(f"✅ Données climatiques insérées pour {station_code} le {measure_date}")
+    return True
+def get_stations_by_basin_river(conn, basin_name=None, river_name=None):
+    """
+    Récupère les IDs des stations filtrées par bassin et/ou rivière
+
+    Args:
+        conn: Connexion SQLite
+        basin_name (str, optional): Nom du bassin
+        river_name (str, optional): Nom de la rivière
+
+    Returns:
+        list: Liste des station_code (IDs) des stations correspondantes
+    """
+    cursor = conn.cursor()
+
+    query = "SELECT station_code FROM stations WHERE 1=1"
+    params = []
+
+    if basin_name:
+        query += " AND basin_name = ?"
+        params.append(basin_name)
+
+    if river_name:
+        query += " AND river_name = ?"
+        params.append(river_name)
+
+    cursor.execute(query, params)
+
+    # Récupère tous les résultats et extrait le premier élément de chaque tuple
+    return [row[0] for row in cursor.fetchall()]
+
+
+def deduplicate_climate_data(db_path='./data/hydro_data.db'):
+    """
+    Supprime les doublons dans la table climate_data basés sur measurement_id
+
+    Args:
+        db_path (str): Chemin vers la base de données
+
+    Returns:
+        dict: Statistiques sur les doublons supprimés
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    print("🔍 Recherche des doublons dans climate_data...")
+
+    # 1. Vérifier combien de doublons
+    cursor.execute('''
+                   SELECT measurement_id, COUNT(*) as count
+                   FROM climate_data
+                   GROUP BY measurement_id
+                   HAVING COUNT (*) > 1
+                   ''')
+
+    doublons = cursor.fetchall()
+    nb_doublons_total = sum([c[1] for c in doublons]) - len(doublons)
+
+    print(f"📊 {len(doublons)} measurement_id avec doublons")
+    print(f"📊 {nb_doublons_total} enregistrements en double à supprimer")
+
+    if not doublons:
+        print("✅ Aucun doublon trouvé !")
+        conn.close()
+        return {'supprimes': 0, 'doublons': []}
+
+    # 2. Afficher quelques exemples
+    print("\n🔍 Exemples de doublons:")
+    for meas_id, count in doublons[:5]:  # 5 premiers
+        cursor.execute('''
+                       SELECT climate_id, measure_date, station_code
+                       FROM climate_data
+                       WHERE measurement_id = ?
+                       ORDER BY climate_id
+                       ''', (meas_id,))
+        records = cursor.fetchall()
+        print(f"  measurement_id {meas_id}: {count} copies")
+        for r in records:
+            print(f"    - ID {r[0]}, date {r[1]}, station {r[2]}")
+
+    # 3. Supprimer les doublons (garder le plus petit ID)
+    print("\n🗑️  Suppression des doublons...")
+
+    cursor.execute('''
+                   DELETE
+                   FROM climate_data
+                   WHERE climate_id NOT IN (SELECT MIN(climate_id)
+                                            FROM climate_data
+                                            GROUP BY measurement_id)
+                   ''')
+
+    nb_supprimes = cursor.rowcount
+    conn.commit()
+
+    # 4. Vérification finale
+    cursor.execute('SELECT COUNT(*) FROM climate_data')
+    total_restant = cursor.fetchone()[0]
+
+    cursor.execute('''
+                   SELECT COUNT(*)
+                   FROM (SELECT measurement_id
+                         FROM climate_data
+                         GROUP BY measurement_id)
+                   ''')
+    total_uniques = cursor.fetchone()[0]
+
+    print(f"\n✅ {nb_supprimes} doublons supprimés")
+    print(f"📊 Total restant: {total_restant} enregistrements")
+    print(f"📊 Dont {total_uniques} measurement_id uniques")
+
+    conn.close()
+
+    return {
+        'supprimes': nb_supprimes,
+        'restant': total_restant,
+        'uniques': total_uniques
+    }
+
+
+def get_climate_data_matrix(station_id, db_path='./data/hydro_data.db'):
+    """
+    Récupère les données climatiques d'une station sous forme de matrice avec la hauteur orthométrique
+
+    Args:
+        station_id (str): Code de la station
+        db_path (str): Chemin vers la base de données
+
+    Returns:
+        list: Matrice avec [date, temp_min, temp_max, temp_moy, precip, temp_moy10j, precip_moy10j, orthometric_height]
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    query = '''
+            SELECT 
+                c.measure_date,
+                c.temp_min_jour,
+                c.temp_max_jour,
+                c.temp_moy_jour,
+                c.precip_jour,
+                c.temp_moy_10j,
+                c.precip_moy_10j,
+                m.orthometric_height
+            FROM climate_data c
+            LEFT JOIN measurements m ON c.measurement_id = m.measurement_id
+            WHERE c.station_code = ?
+            ORDER BY c.measure_date
+            '''
+
+    cursor.execute(query, (station_id,))
+    data = cursor.fetchall()
+    conn.close()
+
+    print(f"✅ {len(data)} enregistrements récupérés pour la station {station_id}")
+    return data
 
 
 def get_stats(conn):

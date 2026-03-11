@@ -12,30 +12,31 @@ dossier_destination = '/home/sar_hydro/STUDIES/EtudesEB/PythonProject/data/ERA5/
 # Créer le dossier s'il n'existe pas
 os.makedirs(dossier_destination, exist_ok=True)
 client = cdsapi.Client()
-mois = [f"{m:02d}" for m in range(1, 13)]
-print(mois)
-year ='2017'
-for m in mois:
-    print(f"Téléchargement du mois {m}")
+years = [ '2026']
+mois = [f"{i:02d}" for i in range(1, 3)]  # ['01', '02', ..., '12']
 
-    # Chemin complet du fichier
-    file_path = os.path.join(dossier_destination, f'downloadfr_{year}_{m}.nc')
+for year in years:
+    for m in mois:
+        print(f"Téléchargement du mois {m} de l'année {year}")
 
-    client.retrieve(
-        'reanalysis-era5-land',
-        {
-            'product_type': 'reanalysis',
-            'variable': [
-                '2m_temperature', 'total_precipitation',
-            ],
-            'year': year,
-            'month': m,
-            'day': [f"{i:02d}" for i in range(1, 32)],
-            'time': [f"{h:02d}:00" for h in range(24)],
-            'area': [52, -6, 40, 10],
-            'format': 'netcdf',
-        },
-        file_path)
+        # Chemin complet du fichier
+        file_path = os.path.join(dossier_destination, f'downloadfr_{year}_{m}.nc')
 
-    # Appel de la fonction unzip (à vérifier si elle accepte le chemin complet)
-    unzip(file_path,mois=m ,year=year)
+        client.retrieve(
+            'reanalysis-era5-land',
+            {
+                'product_type': 'reanalysis',
+                'variable': [
+                    '2m_temperature', 'total_precipitation',
+                ],
+                'year': year,
+                'month': m,
+                'day': [f"{i:02d}" for i in range(1, 32)],
+                'time': [f"{h:02d}:00" for h in range(24)],
+                'area': [52, -6, 40, 10],  # [Nord, Ouest, Sud, Est]
+                'format': 'netcdf',
+            },
+            file_path)
+
+        # Appel de la fonction unzip
+        unzip(file_path, mois=m, year=year)

@@ -58,18 +58,15 @@ def analyse_point(lat, lon, date):
             precip_point = xr.concat([dsy['tp_mm'].sel(latitude=lat, longitude=lon, method='nearest'),precip_point,
                                       ],
                                      dim='valid_time')
-            print("PRECIP POINT :")
-            print(precip_point)
-            print("TEMP POINT :\n")
-            print(temp_point)
         else:
             print(f"❌ Fichier non trouvé: {nfichier}")
             print(f"Vérifie le chemin: /data/ERA5/usable_data_LAND_France/{annee10j}/{mois10j}/")
             return None  # ou raise Exception selon le contexte
 
     # === PRÉCIPITATIONS ===
-    precip_jour = precip_point.sel(valid_time=slice(debut_jour, fin_jour)).mean().values  # moyenne sur le jour
-    precip_moy10j = precip_point.sel(valid_time=slice(date_debut_10j, date_ts)).mean().values
+    precip_jour = precip_point.sel(valid_time=slice(debut_jour, fin_jour)).sum().values  # SOMME, pas moyenne
+    precip_moy10j = precip_point.sel(valid_time=slice(date_debut_10j, date_ts)).resample(
+        valid_time='1D').sum().mean().values
 
     # === TEMPÉRATURE ===
     temp_jour = temp_point.sel(valid_time=slice(debut_jour, fin_jour))
@@ -111,5 +108,5 @@ if __name__ == "__main__":
     analyse_point(
         lat=43.5,
         lon=2.5,
-        date='2016-07-03'
+        date='2017-01-03'
     )
