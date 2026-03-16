@@ -34,7 +34,7 @@ def merge_data(id_station ):
                   '''
     cursor.execute(query_dates, (id_station,))
     dates = [row[0] for row in cursor.fetchall()]
-    dates_filtrees = [d for d in dates if '2016-01-11' < d < '2022-01-01']
+    dates_filtrees = [d for d in dates if '2016-01-11' < d < '2026-01-01']
     print(dates_filtrees)
     # Récupérer tous les résultats
     measurements = cursor.fetchall()

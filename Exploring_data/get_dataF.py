@@ -64,9 +64,9 @@ def analyse_point(lat, lon, date):
             return None  # ou raise Exception selon le contexte
 
     # === PRÉCIPITATIONS ===
-    precip_jour = precip_point.sel(valid_time=slice(debut_jour, fin_jour)).sum().values  # SOMME, pas moyenne
-    precip_moy10j = precip_point.sel(valid_time=slice(date_debut_10j, date_ts)).resample(
-        valid_time='1D').sum().mean().values
+    precip_jour = precip_point.sel(valid_time=slice(debut_jour, fin_jour)).mean().values
+
+    precip_moy10j = precip_point.sel(valid_time=slice(date_debut_10j, date_ts)).mean().values
 
     # === TEMPÉRATURE ===
     temp_jour = temp_point.sel(valid_time=slice(debut_jour, fin_jour))

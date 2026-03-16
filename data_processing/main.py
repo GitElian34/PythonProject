@@ -27,7 +27,7 @@ def main():
     create_tables(conn)
 
     # Liste des rivières à traiter
-    rivieres = ["ALLIER", "ANGLIN", "ARNON", "ARROUX", "BRESSURE", "CHER","CREUSE","DORE","GARTEMPE","HUISNE","INDRE","LOIR","LOIRE","MAINE","MAYENNE","SARTHE","SAULDRE","SEVRE-NANTAISE","SIOULE","THAURION","VIENNE","YEVRE"]
+    rivieres = ["AIN","ARVE","DOUBS","DURANCE","GARDON","ISERE","OGNON","RHONE","SAONE","SEILLE"]
 
     # Pour chaque rivière, récupérer les stations et traiter les données
     for riviere in rivieres:
@@ -36,7 +36,7 @@ def main():
         print('=' * 60)
 
         # Récupérer les stations pour cette rivière
-        stations_ids = get_stations_by_basin_river(conn, "LOIRE", riviere)
+        stations_ids = get_stations_by_basin_river(conn, "RHONE", riviere)
 
         if not stations_ids:
             print(f"⚠️  Aucune station trouvée pour {riviere}")

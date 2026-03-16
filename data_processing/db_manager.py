@@ -343,7 +343,33 @@ def get_stations_by_basin_river(conn, basin_name=None, river_name=None):
     # Récupère tous les résultats et extrait le premier élément de chaque tuple
     return [row[0] for row in cursor.fetchall()]
 
+def get_station_coordinates(conn, station_code):
+    """
+    Récupère la longitude et latitude d'une station
 
+    Args:
+        conn: Connexion SQLite
+        station_code (str): Code de la station (ex: "O568501002")
+
+    Returns:
+        tuple: (longitude, latitude) ou None si station non trouvée
+    """
+    cursor = conn.cursor()
+
+    cursor.execute(
+        'SELECT reference_longitude, reference_latitude FROM stations WHERE station_code = ?',
+        (station_code,)
+    )
+
+    result = cursor.fetchone()
+
+    if result is None:
+        print(f"❌ Station {station_code} non trouvée")
+        return None
+
+    longitude, latitude = result
+    print(f"✅ Coordonnées de {station_code} : lon={longitude}, lat={latitude}")
+    return longitude, latitude
 def deduplicate_climate_data(db_path='./data/hydro_data.db'):
     """
     Supprime les doublons dans la table climate_data basés sur measurement_id
@@ -468,6 +494,37 @@ def get_climate_data_matrix(station_id, db_path='./data/hydro_data.db'):
     print(f"✅ {len(data)} enregistrements récupérés pour la station {station_id}")
     return data
 
+
+def get_station_measurements(conn, station_code):
+    """
+    Récupère les mesures orthométriques d'une station spécifique
+
+    Args:
+        conn: Connexion SQLite
+        station_code (str): Code de la station (ex: "O568501002")
+
+    Returns:
+        list: Liste de tuples (measure_date, measure_time, orthometric_height)
+              ou liste vide si aucun résultat
+    """
+    cursor = conn.cursor()
+
+    # Requête SQL pour récupérer les données
+    query = '''
+            SELECT measure_date, \
+                   measure_time, \
+                   orthometric_height
+            FROM measurements
+            WHERE station_code = ?
+            ORDER BY measure_date, measure_time \
+            '''
+
+    cursor.execute(query, (station_code,))
+    results = cursor.fetchall()
+
+    print(f"✅ {len(results)} mesures trouvées pour la station {station_code}")
+
+    return results
 
 def get_stats(conn):
     """
