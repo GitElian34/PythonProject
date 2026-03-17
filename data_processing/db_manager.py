@@ -357,7 +357,7 @@ def get_station_coordinates(conn, station_code):
     cursor = conn.cursor()
 
     cursor.execute(
-        'SELECT reference_longitude, reference_latitude FROM stations WHERE station_code = ?',
+        'SELECT reference_longitude, reference_latitude, river_name FROM stations WHERE station_code = ?',
         (station_code,)
     )
 
@@ -367,9 +367,9 @@ def get_station_coordinates(conn, station_code):
         print(f"❌ Station {station_code} non trouvée")
         return None
 
-    longitude, latitude = result
+    longitude, latitude,river_name = result
     print(f"✅ Coordonnées de {station_code} : lon={longitude}, lat={latitude}")
-    return longitude, latitude
+    return longitude, latitude, river_name
 def deduplicate_climate_data(db_path='./data/hydro_data.db'):
     """
     Supprime les doublons dans la table climate_data basés sur measurement_id
@@ -513,7 +513,7 @@ def get_station_measurements(conn, station_code):
     query = '''
             SELECT measure_date, \
                    measure_time, \
-                   orthometric_height
+                   ellipsoidal_height
             FROM measurements
             WHERE station_code = ?
             ORDER BY measure_date, measure_time \
