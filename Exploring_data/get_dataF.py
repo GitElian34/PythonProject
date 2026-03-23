@@ -5,6 +5,65 @@ import numpy as np
 from xarray.backends.zarr import extract_zarr_variable_encoding
 
 
+def analyse_point_fast(lat, lon, date, ds=None, dsy=None):
+    annee, mois, _ = date.split('-')
+
+    # Charger seulement si pas fourni en argument
+    if ds is None:
+        fichier = f'/home/sar_hydro/STUDIES/EtudesEB/PythonProject/data/ERA5/usable_data_LAND_France/{annee}/{mois}/data_0.nc'
+        if os.path.exists(fichier):
+            ds = xr.open_dataset(fichier)
+        else:
+            print(f"❌ Fichier non trouvé: {fichier}")
+            return None
+
+    ds['t2m_c'] = ds['t2m'] - 273.15
+    ds['tp_mm'] = ds['tp'] * 1000
+
+    temp_point = ds['t2m_c'].sel(latitude=lat, longitude=lon, method='nearest')
+    precip_point = ds['tp_mm'].sel(latitude=lat, longitude=lon, method='nearest')
+
+    date_ts = pd.Timestamp(date)
+    debut_jour = date_ts
+    fin_jour = date_ts + pd.Timedelta(days=1)
+    date_debut_10j = date_ts - pd.Timedelta(days=10)
+    annee10j, mois10j, _ = str(date_debut_10j).split('-')
+
+    if mois10j != mois:
+        if dsy is None:
+            nfichier = f'/home/sar_hydro/STUDIES/EtudesEB/PythonProject/data/ERA5/usable_data_LAND_France/{annee10j}/{mois10j}/data_0.nc'
+            if os.path.exists(nfichier):
+                dsy = xr.open_dataset(nfichier)
+                dsy['t2m_c'] = dsy['t2m'] - 273.15
+                dsy['tp_mm'] = dsy['tp'] * 1000
+            else:
+                print(f"❌ Fichier non trouvé: {nfichier}")
+                return None
+
+        if dsy is not None:
+            dsy['t2m_c'] = dsy['t2m'] - 273.15
+            dsy['tp_mm'] = dsy['tp'] * 1000
+            temp_point = xr.concat([dsy['t2m_c'].sel(latitude=lat, longitude=lon, method='nearest'), temp_point],
+                                   dim='valid_time')
+            precip_point = xr.concat([dsy['tp_mm'].sel(latitude=lat, longitude=lon, method='nearest'), precip_point],
+                                     dim='valid_time')
+
+    precip_jour = precip_point.sel(valid_time=slice(debut_jour, fin_jour)).mean().values
+    precip_moy10j = precip_point.sel(valid_time=slice(date_debut_10j, date_ts)).mean().values
+    temp_jour = temp_point.sel(valid_time=slice(debut_jour, fin_jour))
+    temp_min_jour = temp_jour.min().values
+    temp_max_jour = temp_jour.max().values
+    temp_moy_jour = temp_jour.mean().values
+    temp_moy10j = temp_point.sel(valid_time=slice(date_debut_10j, date_ts)).mean().values
+
+    return {
+        'precip_jour': precip_jour,
+        'precip_moy10j': precip_moy10j,
+        'temp_min_jour': temp_min_jour,
+        'temp_max_jour': temp_max_jour,
+        'temp_moy_jour': temp_moy_jour,
+        'temp_moy10j': temp_moy10j
+    }
 
 def analyse_point(lat, lon, date):
     """

@@ -32,7 +32,7 @@ def get_closest_measurements_bulk(station_code, date_time_list, csv_dir="."):
 def compare_hydro_insitu_par_date(station_hydro):
     conn = sqlite3.connect('./data/hydro_data.db')
     data_hydro = get_station_measurements(conn, station_hydro)
-    lon, lat = get_station_coordinates(conn, station_hydro)
+    lon, lat,_ = get_station_coordinates(conn, station_hydro)
     conn.close()
 
     station_insitu, distance, lon_insitu, lat_insitu, dans_riviere = station_la_plus_proche(lon, lat)

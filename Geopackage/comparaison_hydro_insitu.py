@@ -11,6 +11,7 @@ import numpy as np
 def get_closest_measurements_bulk(station_code, date_time_list, csv_dir="."):
     pattern = os.path.join(csv_dir, f"*{station_code}*.csv")
     fichiers = glob.glob(pattern)
+    print("Station code : " ,station_code)
     if not fichiers:
         print(f"❌ Fichier non trouvé pour {station_code} dans {csv_dir}")
         return [None] * len(date_time_list)
@@ -46,7 +47,8 @@ def compare_hydro_insitu(station_hydro):
         hauteurs_hydro = [row[2] for row in data_hydro]
         date_time_list = [(row[0], row[1]) for row in data_hydro]
         data_insitu = get_closest_measurements_bulk(station_insitu, date_time_list, "./data/insitu/data")
-
+        print(f"{station_insitu} : {data_insitu}")
+        print(f"hauteurs hydro : {hauteurs_hydro}")
         df = normalise_et_compare(hauteurs_hydro, data_insitu, dates=[row[0] for row in data_hydro])
 
         if df is not None and len(df) > 0:
@@ -56,6 +58,9 @@ def compare_hydro_insitu(station_hydro):
             print(f"  ecart_norm={ecart:.3f} | Pearson={pearson:.3f} | NSE={nse:.3f}")
             return ecart, pearson, nse, distance
         return None, None, None, distance
+    else :
+        return None, None, None, distance
+
 
 
 def normalise_et_compare(hauteurs_hydro, hauteurs_insitu, dates=None):

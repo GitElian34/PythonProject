@@ -15,7 +15,7 @@ def point_dans_riviere(lon, lat, fichier=fichier):
     gdf_local = gpd.read_file(fichier, bbox=bbox)
 
     if gdf_local.empty:
-        print(f"❌ Aucune rivière trouvée autour de ({lon}, {lat})")
+        #print(f"❌ Aucune rivière trouvée autour de ({lon}, {lat})")
         return False
 
     # Vérifier si le point est DANS un polygone

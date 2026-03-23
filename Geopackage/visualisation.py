@@ -28,7 +28,7 @@ def station_la_plus_proche(lon, lat, riviere_origine=None):
         if point_dans_riviere(station_lon, station_lat):
             # Sauvegarder le premier valide comme fallback
             if premier_valide is None:
-                premier_valide = (closest['code_sta'], closest['distance_m'], lon, lat, True)
+                premier_valide = (closest['code_sta'], closest['distance_m'], lon, lat)
 
             print(f"  La station hydro : {riviere_origine}")
             print(f"  La station insitu : {closest['river_name']}")

@@ -12,8 +12,8 @@ dossier_destination = '/home/sar_hydro/STUDIES/EtudesEB/PythonProject/data/ERA5/
 # Créer le dossier s'il n'existe pas
 os.makedirs(dossier_destination, exist_ok=True)
 client = cdsapi.Client()
-years = [ '2026']
-mois = [f"{i:02d}" for i in range(1, 3)]  # ['01', '02', ..., '12']
+years = [ '2015']
+mois = [f"{i:02d}" for i in range(12, 13)]  # ['01', '02', ..., '12']
 
 for year in years:
     for m in mois:
