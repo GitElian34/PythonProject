@@ -61,8 +61,8 @@ if __name__ == "__main__":
     train_combined = ConcatDataset(train_datasets)
     test_combined  = ConcatDataset(test_datasets)
 
-    train_loader = DataLoader(train_combined, batch_size=BATCH_SIZE, shuffle=False)  # shuffle=True important
-    test_loader  = DataLoader(test_combined,  batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(train_combined, batch_size=BATCH_SIZE, shuffle=True)  # shuffle=True important
+    test_loader  = DataLoader(test_combined,  batch_size=BATCH_SIZE, shuffle=True)
 
     print(f"\n📊 Dataset combiné : {len(train_combined)} train | {len(test_combined)} test")
 

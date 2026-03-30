@@ -3,6 +3,8 @@ import sqlite3
 import glob
 import os
 import random
+
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 
@@ -78,37 +80,61 @@ def charger_station(fichier, conn):
     conn.commit()
 
     print(f"  ✅ {len(rows)}/{len(grouped)} jours insérés | Rivière: {river_name}")
+def update_mediane_station(station_code, fichier, conn):
+    """
+    Relit le CSV brut et recalcule h_med_wsh = médiane de toutes les mesures
+    WSH de la journée. Écrase toujours les valeurs existantes.
+    """
+    df = pd.read_csv(fichier)
+    df['Date']      = pd.to_datetime(df['Date'], utc=True)
+    df['date_only'] = df['Date'].dt.date
+
+    updates = []
+    for date, jour in df.groupby('date_only'):
+        valeurs = jour['WSH'].dropna().values
+        if len(valeurs) == 0:
+            continue
+        mediane = float(np.median(valeurs))
+        updates.append((mediane, station_code, str(date)))
+
+    if not updates:
+        print(f"  ⚠️  Aucune valeur WSH trouvée pour {station_code}")
+        return 0
+
+    conn.cursor().executemany('''
+        UPDATE mesures_insitu
+        SET h_med_wsh = ?
+        WHERE code_sta = ? AND date = ?
+    ''', updates)
+    conn.commit()
+
+    print(f"  ✅ {len(updates)} médianes mises à jour pour {station_code}")
+    return len(updates)
+
 
 
 if __name__ == "__main__":
     create_insitu_db(DB_PATH)
-    fichiers = glob.glob(os.path.join(CSV_DIR, "*.csv"))
-    print(f"📂 {len(fichiers)} fichiers CSV trouvés")
 
-    fichiers_sample = random.sample(fichiers, 200)
+    fichiers = glob.glob(os.path.join(CSV_DIR, "*.csv"))
+    fichiers_sample = random.sample(fichiers, min(3423, len(fichiers)))
+    print(f"📂 {len(fichiers_sample)} stations à traiter")
 
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
 
     for i, fichier in enumerate(fichiers_sample):
         station_code = extract_station_code(fichier)
-        print(f"\n🔄 [{i + 1}/{len(fichiers_sample)}] Station {station_code}")
+        if station_code is None:
+            continue
 
         try:
-            # Vérifier si la station existe déjà complètement
-            cursor.execute('SELECT COUNT(*) FROM mesures_insitu WHERE code_sta = ?', (station_code,))
-            nb_mesures = cursor.fetchone()[0]
+            update_mediane_station(station_code, fichier, conn)
 
-            if nb_mesures > 0:
-                print(f"  ⏭️  Mesures déjà présentes ({nb_mesures} jours), skip insitu")
-            else:
-                charger_station(fichier, conn)
-
-            # ERA5 a déjà son propre check interne
-            charger_era5_insitu(db_path=DB_PATH, station_unique=station_code)
+            if (i + 1) % 100 == 0:
+                print(f"  [{i+1}/{len(fichiers_sample)}] en cours...")
 
         except Exception as e:
-            print(f"  ⚠️  Erreur: {e}")
+            print(f"  ⚠️  {station_code} : {e}")
 
     conn.close()
-    print(f"\n✅ Terminé — base : {DB_PATH}")
+    print(f"✅ Terminé — {DB_PATH}")

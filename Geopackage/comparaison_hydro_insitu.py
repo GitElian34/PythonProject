@@ -38,8 +38,9 @@ def compare_hydro_insitu(station_hydro):
     data_hydro = get_station_measurements(conn, station_hydro)
     lon, lat,river_name  = get_station_coordinates(conn, station_hydro)
     conn.close()
-
-    station_insitu, distance,lon_insitu,lat_insitu  = station_la_plus_proche(lon, lat,river_name)
+    #On utilise plus river_name pr l'instant car peu concluant
+    #station_insitu, distance,lon_insitu,lat_insitu  = station_la_plus_proche(lon, lat,river_name)
+    station_insitu, distance, lon_insitu, lat_insitu = station_la_plus_proche(lon, lat)
     #point_dans_riviere(lon_insitu, lat_insitu) and
     if distance < seuil:
         print(f"  📍 Station insitu: {station_insitu} | Distance: {distance:.0f} m")

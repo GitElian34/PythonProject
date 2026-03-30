@@ -29,7 +29,7 @@ def point_dans_riviere(lon, lat, fichier=fichier):
         return True
 
     # Sinon, vérifier si c'est juste à côté (intersects avec un petit buffer)
-    point_buffer = point.buffer(0.001)  # ~10m en WGS84 (approximatif)
+    point_buffer = point.buffer(0.002)  # ~10m en WGS84 (approximatif)
     gdf_buffer = gpd.GeoDataFrame(geometry=[point_buffer], crs="EPSG:4326")
     result_proche = gpd.sjoin(gdf_buffer, gdf_local, how="inner", predicate="intersects")
 

@@ -10,7 +10,11 @@ def create_insitu_db(db_path="./data/insitu_data.db"):
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS stations_insitu (
             code_sta TEXT PRIMARY KEY,
-            river_name TEXT
+            river_name TEXT,
+            dans_lac TEXT DEFAULT 'inconnu',
+            qualite_sauts TEXT,
+            signal_plat INTEGER,
+            gap_max_jours INTEGER
         )
     ''')
     cursor.execute('''
@@ -24,6 +28,7 @@ def create_insitu_db(db_path="./data/insitu_data.db"):
             h_01h_alt REAL,
             h_09h_alt REAL,
             h_17h_alt REAL,
+            h_med_wsh REAL, 
             UNIQUE(code_sta, date),
             FOREIGN KEY (code_sta) REFERENCES stations_insitu(code_sta)
         )
@@ -116,6 +121,7 @@ def get_donnees_station(code_sta, db_path="./data/insitu_data.db"):
             m.h_01h_wsh,
             m.h_09h_wsh,
             m.h_17h_wsh,
+            m.h_med_wsh,
             e.precip_jour,
             e.temp_min_jour,
             e.temp_max_jour,

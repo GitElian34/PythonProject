@@ -142,6 +142,11 @@ def evaluer(model, test_loader, train_loader, seuil_sigma=2.5):
 
     # NSE
     nse = 1 - np.sum((actuals - predictions)**2) / np.sum((actuals - actuals.mean())**2) if ss_tot > 0 else 0
+    # KGE
+    r = np.corrcoef(actuals, predictions)[0, 1]
+    alpha = np.std(predictions) / np.std(actuals) if np.std(actuals) > 0 else 0
+    beta = np.mean(predictions) / np.mean(actuals) if np.mean(actuals) != 0 else 0
+    kge = 1 - np.sqrt((r - 1) ** 2 + (alpha - 1) ** 2 + (beta - 1) ** 2)
 
     # Train loss pour ratio overfitting
     model.train()
@@ -166,12 +171,15 @@ def evaluer(model, test_loader, train_loader, seuil_sigma=2.5):
     print(f"  RMSE           : {rmse:.4f}")
     print(f"  R²             : {r2:.4f}")
     print(f"  NSE            : {nse:.4f}")
+    print(f"  KGE            : {kge:.4f}  (r={r:.3f} | α={alpha:.3f} | β={beta:.3f})")
     print(f"  Ratio overfit  : {ratio_overfit:.4f}")
     print(f"  Outliers       : {outliers.sum()} / {len(outliers)}")
 
     return predictions, actuals, outliers, erreurs, {
         'mae': mae, 'rmse': rmse, 'r2': r2,
-        'nse': nse, 'ratio_overfit': ratio_overfit
+        'nse': nse, 'kge': kge,
+        'kge_r': r, 'kge_alpha': alpha, 'kge_beta': beta,
+        'ratio_overfit': ratio_overfit
     }
 
 

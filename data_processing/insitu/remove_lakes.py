@@ -61,7 +61,7 @@ def point_dans_lac_flag(lon, lat):
         return 'dans_lac'
 
     # Test proximité (~100m)
-    point_buffer = point.buffer(0.001)
+    point_buffer = point.buffer(0.003)
     gdf_buffer = gpd.GeoDataFrame(geometry=[point_buffer], crs="EPSG:4326")
     result_proche = gpd.sjoin(gdf_buffer, gdf_local, how="inner", predicate="intersects")
     if not result_proche.empty:
