@@ -54,6 +54,7 @@ def create_tables(conn):
     CREATE TABLE IF NOT EXISTS stations (
         station_id INTEGER PRIMARY KEY AUTOINCREMENT,
         station_code TEXT UNIQUE NOT NULL,
+        hydroweb_name TEXT,
         basin_name TEXT NOT NULL,
         river_name TEXT NOT NULL,
         reference_longitude DECIMAL(10,6),
@@ -456,7 +457,55 @@ def deduplicate_climate_data(db_path='./data/hydro_data.db'):
         'uniques': total_uniques
     }
 
+def add_hydroweb_names(conn, shp_path):
+    """
+    Fait le matching entre la BDD et le shapefile HydroWeb
+    pour ajouter le nom lisible (ex: R_GARONNE_GARONNE_KM0084)
+    à chaque station.
+    """
+    import geopandas as gpd
+    import pandas as pd
 
+    # Charger le shapefile
+    stations_shp = gpd.read_file(shp_path)
+    stations_shp['lon_r'] = stations_shp['lon'].round(4)
+    stations_shp['lat_r'] = stations_shp['lat'].round(4)
+
+    # Charger les stations de la BDD
+    stations_db = pd.read_sql(
+        "SELECT station_code, reference_longitude, reference_latitude FROM stations",
+        conn
+    )
+    stations_db['lon_r'] = stations_db['reference_longitude'].round(4)
+    stations_db['lat_r'] = stations_db['reference_latitude'].round(4)
+
+    # Matching par coordonnées
+    merged = stations_db.merge(
+        stations_shp[['name', 'lon_r', 'lat_r']],
+        on=['lon_r', 'lat_r'],
+        how='left'
+    )
+
+    # Ajouter la colonne si elle n'existe pas
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE stations ADD COLUMN hydroweb_name TEXT")
+    except Exception:
+        pass  # colonne existe déjà
+
+    # Mettre à jour
+    updated = 0
+    for _, row in merged.iterrows():
+        if pd.notna(row.get('name')):
+            cursor.execute(
+                "UPDATE stations SET hydroweb_name = ? WHERE station_code = ?",
+                (row['name'], row['station_code'])
+            )
+            updated += 1
+
+    conn.commit()
+    print(f"✅ {updated} stations mises à jour avec leur hydroweb_name")
+    return updated
 def get_climate_data_matrix(station_id, db_path='./data/hydro_data.db'):
     """
     Récupère les données climatiques d'une station sous forme de matrice avec la hauteur orthométrique
