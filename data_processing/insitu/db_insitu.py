@@ -11,6 +11,8 @@ def create_insitu_db(db_path="./data/insitu_data.db"):
         CREATE TABLE IF NOT EXISTS stations_insitu (
             code_sta TEXT PRIMARY KEY,
             river_name TEXT,
+            lon REAL,                          -- NOUVEAU
+            lat REAL,                          -- NOUVEAU
             dans_lac TEXT DEFAULT 'inconnu',
             qualite_sauts TEXT,
             signal_plat INTEGER,
@@ -145,6 +147,99 @@ def get_donnees_station(code_sta, db_path="./data/insitu_data.db"):
     print(df.head())
     return df
 
+def get_era5_bv(code_sta, db_path="./data/insitu_data.db"):
+    """
+    Récupère uniquement les 50 features ERA5-BV (5 tranches x 10 jours)
+    pour une station, indexées par date.
+    """
+    conn = sqlite3.connect(db_path)
+
+    df_bv = pd.read_sql_query('''
+        SELECT m.date, p.tranche_km,
+               p.J0, p.J1, p.J2, p.J3, p.J4,
+               p.J5, p.J6, p.J7, p.J8, p.J9
+        FROM era5_pluie_bv p
+        JOIN mesures_insitu m ON p.mesure_id = m.id
+        WHERE p.code_sta = ?
+        ORDER BY m.date
+    ''', conn, params=(code_sta,))
+
+    conn.close()
+
+    if df_bv.empty:
+        print(f"⚠️  {code_sta} — pas de données ERA5-BV")
+        return None
+
+    # Pivoter : une ligne par date, 50 colonnes
+    df_pivot = df_bv.pivot(
+        index='date', columns='tranche_km',
+        values=['J0','J1','J2','J3','J4','J5','J6','J7','J8','J9']
+    )
+    df_pivot.columns = [f'{j}_{t}' for j, t in df_pivot.columns]
+    df_pivot = df_pivot.reset_index()
+    df_pivot['date'] = pd.to_datetime(df_pivot['date'])
+
+    print(f"✅ {len(df_pivot)} lignes | {df_pivot.shape[1]-1} features ERA5-BV pour {code_sta}")
+    return df_pivot
+
+def get_donnees_station_bv(code_sta, db_path="./data/insitu_data.db"):
+    """
+    Récupère les données insitu + ERA5 + features ERA5-BV pour une station.
+    Remplace precip_moy_10j par les 50 features ERA5-BV.
+    """
+    # Données de base sans precip_moy_10j
+    df = get_donnees_station(code_sta, db_path)
+    if df is None:
+        return None
+
+    # Features BV
+    df_bv = get_era5_bv(code_sta, db_path)
+    if df_bv is None:
+        print(f"⚠️  {code_sta} — pas de données BV, retour baseline")
+        return df
+
+    # Joindre et supprimer precip_moy_10j
+    df = df.merge(df_bv, on='date', how='inner')
+    df = df.drop(columns=['precip_moy_10j'], errors='ignore')
+    df = df.dropna().reset_index(drop=True)
+
+    print(f"✅ {len(df)} lignes | {df.shape[1]} colonnes (avec BV) pour {code_sta}")
+    return df
+
+
+def add_coordinates_from_gpkg(db_path='./data/insitu_data.db',
+                               gpkg_path='./data/insitu/shp/station_schapi_alti_ref_2025.gpkg'):
+    """
+    Ajoute les coordonnées lon/lat dans stations_insitu
+    depuis le fichier gpkg SCHAPI.
+    """
+    import geopandas as gpd
+
+    gdf    = gpd.read_file(gpkg_path)
+    gdf_fr = gdf.cx[-5.2:9.6, 41.3:51.1]
+
+    conn   = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Ajouter les colonnes si BDD existante sans ces colonnes
+    for col in ['lon', 'lat']:
+        try:
+            cursor.execute(f'ALTER TABLE stations_insitu ADD COLUMN {col} REAL')
+        except Exception:
+            pass
+
+    updated = 0
+    for _, row in gdf_fr.iterrows():
+        cursor.execute(
+            'UPDATE stations_insitu SET lon=?, lat=? WHERE code_sta=?',
+            (row['lon'], row['lat'], row['code_sta'])
+        )
+        updated += cursor.rowcount
+
+    conn.commit()
+    conn.close()
+    print(f"✅ {updated} stations mises à jour avec lon/lat")
+    return updated
 
 def get_stations_insitu(conn):
     cursor = conn.cursor()
