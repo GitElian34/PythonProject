@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 
-from data_processing.insitu.Era5_insitu import charger_era5_insitu
-from db_insitu import create_insitu_db, insert_station_insitu, insert_mesure_insitu
+from data_processing import charger_era5_insitu
+from db_insitu import create_insitu_db, insert_station_insitu
 
 GPKG_PATH = "./data/insitu/shp/station_schapi_alti_ref_2025_river.gpkg"
 CSV_DIR = "./data/insitu/data"

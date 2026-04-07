@@ -1,17 +1,14 @@
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import sqlite3
 from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from tslearn.clustering import TimeSeriesKMeans, KShape
 from tslearn.preprocessing import TimeSeriesScalerMeanVariance
-from tslearn.utils import to_time_series_dataset
 import warnings
 warnings.filterwarnings('ignore')
 
-from data_processing.insitu.db_insitu import get_donnees_station, get_stations_insitu
+from data_processing import get_donnees_station, get_stations_insitu
 
 DB_PATH = "./data/insitu_data.db"
 

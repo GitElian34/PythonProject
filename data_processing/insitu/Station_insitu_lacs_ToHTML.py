@@ -3,7 +3,7 @@ import sqlite3
 import pandas as pd
 from shapely.geometry import Point
 import folium
-from data_processing.insitu.remove_lakes import get_station_coords
+from data_processing import get_station_coords
 
 # Charger stations depuis la BDD
 conn = sqlite3.connect("./data/insitu_data.db")

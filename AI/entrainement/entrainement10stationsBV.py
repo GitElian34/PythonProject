@@ -8,8 +8,8 @@ import sqlite3
 import random
 import os
 
-from data_processing.insitu.db_insitu import get_donnees_station, get_era5_bv
-from AI.LSTM import LSTMHydro, device, HydroDataset, entrainer, evaluer
+from data_processing import get_donnees_station, get_era5_bv
+from AI.LSTM.LSTM import LSTMHydro, device, HydroDataset, entrainer, evaluer
 
 # ═══════════════════════════════════════════════════════════════
 # PARAMÈTRES

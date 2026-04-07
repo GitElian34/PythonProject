@@ -1,13 +1,12 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader
 
-from AI.LSTM import LSTMHydro, device, HydroDataset, entrainer, evaluer
-from data_processing.insitu.db_insitu import get_donnees_station
+from AI.LSTM.LSTM import LSTMHydro, device, HydroDataset, entrainer, evaluer
+from data_processing import get_donnees_station
 
 # ─────────────────────────────────────────────
 # CONFIGURATION

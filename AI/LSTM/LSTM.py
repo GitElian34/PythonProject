@@ -1,12 +1,9 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import Dataset, DataLoader
-
-from AI.Visualisation import visualiser_outliers
-from data_processing.insitu.db_insitu import get_donnees_station
+from data_processing import get_donnees_station
 import os
 
 # Limite à 1 seul GPU
@@ -186,30 +183,3 @@ def evaluer(model, test_loader, train_loader, seuil_sigma=2.5):
 # ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
-if __name__ == "__main__":
-    print(f"🔄 Chargement des données pour {STATION}...")
-    df = get_donnees_station(STATION)
-    train_loader, test_loader, scaler, data_scaled, split = preparer_donnees(
-        df, FEATURES, TARGET, FENETRE, BATCH_SIZE
-    )
-    model = LSTMHydro(
-        input_size=len(FEATURES),
-        hidden_size=HIDDEN_SIZE,
-        num_layers=NUM_LAYERS
-    )
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    criterion = nn.MSELoss()
-
-    print(f"\n🚀 Entraînement ({EPOCHS} epochs)...")
-    for epoch in range(EPOCHS):
-        loss = entrainer(model, train_loader, optimizer, criterion)
-        if (epoch + 1) % 10 == 0:
-            print(f"  Epoch {epoch+1}/{EPOCHS} | Loss: {loss:.4f}")
-
-    print(f"\n🔍 Évaluation et détection d'outliers...")
-    predictions, actuals, outliers, erreurs = evaluer(model, test_loader)
-
-    visualiser_outliers(predictions, actuals, outliers, erreurs, STATION, df)
-
-    torch.save(model.state_dict(), f'./data/models/lstm_{STATION}.pt')
-    print(f"\n✅ Modèle sauvegardé")

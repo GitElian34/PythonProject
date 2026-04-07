@@ -2,7 +2,7 @@ import geopandas as gpd
 import numpy as np
 from pyproj import Transformer
 from shapely.geometry import Point
-import sys
+
 
 from Geopackage.Sword_request import point_dans_riviere
 

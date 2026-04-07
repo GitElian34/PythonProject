@@ -8,8 +8,8 @@ import sqlite3
 import random
 import os
 
-from data_processing.insitu.db_insitu import get_donnees_station, get_donnees_station_bv
-from AI.LSTM import LSTMHydro, device, HydroDataset, evaluer
+from data_processing import get_donnees_station, get_donnees_station_bv
+from AI.LSTM.LSTM import LSTMHydro, device, HydroDataset, evaluer
 
 DB_PATH    = "./data/insitu_data.db"
 MODELS_DIR = "./data/IA/Models/BV/"

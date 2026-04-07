@@ -1,13 +1,11 @@
 import torch
 import torch.nn as nn
-import numpy as np
-import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, ConcatDataset
 import sqlite3
 
-from data_processing.insitu.db_insitu import get_donnees_station, get_stations_insitu
-from AI.LSTM import LSTMHydro, device, HydroDataset, entrainer, evaluer
+from data_processing import get_donnees_station, get_stations_insitu
+from AI.LSTM.LSTM import LSTMHydro, device, HydroDataset, entrainer, evaluer
 
 DB_PATH = "./data/insitu_data.db"
 
