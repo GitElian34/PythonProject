@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import xarray as xr
 from datetime import datetime, timedelta
-from math import radians, cos, sin, asin, sqrt
 
 # ═══════════════════════════════════════════════════════════════
 # PARAMÈTRES
@@ -17,15 +16,6 @@ NB_JOURS  = 10
 # ═══════════════════════════════════════════════════════════════
 # FONCTIONS
 # ═══════════════════════════════════════════════════════════════
-
-def haversine(lon1, lat1, lon2, lat2):
-    R = 6371
-    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    a = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
-    return 2 * R * asin(sqrt(a))
-
 
 def tranche_label(dist_km):
     for debut, fin in TRANCHES:
@@ -73,7 +63,7 @@ def calculer_pluie_par_tranche(pixels, mesure_date, cache_mensuel, era5_base):
     dt_ref       = datetime.strptime(mesure_date, '%Y-%m-%d')
     pixels_lons  = pixels['pixel_lon'].values
     pixels_lats  = pixels['pixel_lat'].values
-    tranches_pix = pixels['tranche_km'].values  # déjà calculé en amont
+    tranches_pix = pixels['tranche_km'].values
 
     valeurs_jours = []
 
@@ -105,7 +95,7 @@ def calculer_pluie_par_tranche(pixels, mesure_date, cache_mensuel, era5_base):
         except Exception:
             valeurs_jours.append(np.zeros(len(pixels)))
 
-    valeurs_array = np.array(valeurs_jours)  # (NB_JOURS, nb_pixels)
+    valeurs_array = np.array(valeurs_jours)
 
     labels_uniques = [f'{d}-{f}km' for d, f in TRANCHES if f is not None] + ['>300km']
     resultats = {}
@@ -144,15 +134,15 @@ def main():
 
     # ── 1. Stations à traiter ──
     stations = pd.read_sql('''
-        SELECT e.code_sta, COUNT(*) as nb_pixels,
-               s.lon as lon_sta, s.lat as lat_sta
+        SELECT e.code_sta, COUNT(*) as nb_pixels
         FROM era5_transfert e
         JOIN bv_data b ON e.code_sta = b.code_sta
         JOIN stations_insitu s ON e.code_sta = s.code_sta
         GROUP BY e.code_sta
         HAVING COUNT(*) >= 50
           AND e.code_sta NOT IN (SELECT DISTINCT code_sta FROM era5_pluie_bv)
-        LIMIT 100
+        ORDER BY RANDOM()
+        LIMIT 200
     ''', conn)
     print(f"Stations à traiter : {len(stations)}")
 
@@ -161,23 +151,17 @@ def main():
     for _, row in stations.iterrows():
         code_sta  = row['code_sta']
         nb_pixels = row['nb_pixels']
-        lon_sta   = row['lon_sta']
-        lat_sta   = row['lat_sta']
         print(f"\nStation : {code_sta} ({nb_pixels} pixels ERA5)")
 
-        # ── 2. Pixels ERA5 + calcul Haversine ──
+        # ── 2. Pixels ERA5 depuis la DB (dist_km corrigée) ──
         pixels = pd.read_sql('''
-            SELECT pixel_lon, pixel_lat
+            SELECT pixel_lon, pixel_lat, dist_km
             FROM era5_transfert WHERE code_sta = ?
         ''', conn, params=(code_sta,))
 
-        pixels['dist_km']   = pixels.apply(
-            lambda r: round(haversine(lon_sta, lat_sta, r['pixel_lon'], r['pixel_lat']), 2),
-            axis=1
-        )
         pixels['tranche_km'] = pixels['dist_km'].apply(tranche_label)
 
-        print(f"  Distribution tranches (Haversine) :")
+        print(f"  Distribution tranches :")
         print(pixels.groupby('tranche_km').size().rename('nb').to_string())
 
         # ── 3. Mesures ──

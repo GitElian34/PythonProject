@@ -3,7 +3,6 @@ import torch.nn as nn
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import Dataset, DataLoader
-from data_processing import get_donnees_station
 import os
 
 # Limite à 1 seul GPU

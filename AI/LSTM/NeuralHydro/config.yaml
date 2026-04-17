@@ -1,0 +1,94 @@
+# ═══════════════════════════════════════════════
+# EXPERIMENT
+# ═══════════════════════════════════════════════
+experiment_name: satellite_water_level_test
+
+# ═══════════════════════════════════════════════
+# DATASET
+# ═══════════════════════════════════════════════
+dataset: generic
+data_dir: ./data/IA/NeuralHydrology
+
+# Fichiers listant les stations (un id par ligne)
+train_basin_file: ./AI/LSTM/NeuralHydro/train_basins.txt
+validation_basin_file: ./AI/LSTM/NeuralHydro/val_basins.txt
+test_basin_file: ./AI/LSTM/NeuralHydro/val_basins.txt
+# ═══════════════════════════════════════════════
+# PÉRIODES
+# ═══════════════════════════════════════════════
+train_start_date: "01/01/2016"
+train_end_date: "31/12/2023"
+validation_start_date: "01/01/2024"
+validation_end_date: "31/12/2025"
+
+# ═══════════════════════════════════════════════
+# VARIABLES
+# ═══════════════════════════════════════════════
+target_variables:
+  - water_level
+
+dynamic_inputs:
+  - precipitation
+  - temperature
+  - pet
+
+static_attributes:
+  - aire_km2
+  - frac_urban
+  - frac_forest
+  - frac_agriculture
+  - sg_clay_0_30cm
+  - sg_sand_0_30cm
+  - sg_silt_0_30cm
+
+# ═══════════════════════════════════════════════
+# PRE-TRAITEMENT
+# ═══════════════════════════════════════════════
+#statics_embedding:
+#  type: fc
+#  hiddens: [20, 10]
+#  activation: tanh
+
+
+dynamics_embedding:
+  type: fc
+  hiddens: [16, 8]
+  activation: tanh
+# ═══════════════════════════════════════════════
+# ARCHITECTURE
+# ═══════════════════════════════════════════════
+model: cudalstm
+head: regression
+hidden_size: 128
+seq_length: 365
+predict_last_n: 1
+
+# ═══════════════════════════════════════════════
+# ENTRAÎNEMENT
+# ═══════════════════════════════════════════════
+epochs: 30
+batch_size: 256
+output_dropout: 0.4
+optimizer: AdamW
+learning_rate:
+  0: 0.001
+  20: 0.0001
+
+loss: NSE
+
+initial_forget_bias: 3
+save_validation_results: True
+max_updates_per_epoch: 500
+# ═══════════════════════════════════════════════
+# VALIDATION
+# ═══════════════════════════════════════════════
+validate_every: 5
+validate_n_random_basins: 50
+metrics:
+  - NSE
+  - KGE
+
+# ═══════════════════════════════════════════════
+# DEVICE
+# ═══════════════════════════════════════════════
+device: cpu   # remplacez par cuda:0 si vous avez un GPU

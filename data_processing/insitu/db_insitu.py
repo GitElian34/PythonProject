@@ -257,3 +257,135 @@ def get_era5_insitu(conn, code_sta):
         ORDER BY date
     ''', (code_sta,))
     return cursor.fetchall()
+
+def creer_table_corine(conn):
+    """Crée la table bv_corine pour stocker les fractions CORINE + texture des sols."""
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS bv_corine (
+            corine_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_sta          TEXT UNIQUE NOT NULL,
+            frac_urban        DECIMAL(5,4),
+            frac_agriculture  DECIMAL(5,4),
+            frac_forest       DECIMAL(5,4),
+            frac_semi_natural DECIMAL(5,4),
+            frac_wetland      DECIMAL(5,4),
+            frac_water        DECIMAL(5,4),
+            nb_pixels         INTEGER,
+            sg_clay_0_30cm    DECIMAL(5,2),
+            sg_sand_0_30cm    DECIMAL(5,2),
+            sg_silt_0_30cm    DECIMAL(5,2),
+            created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (code_sta) REFERENCES stations_insitu(code_sta)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_corine_code_sta ON bv_corine(code_sta)')
+    conn.commit()
+
+
+def inserer_corine(conn, code_sta, fractions, nb_pixels, soil=None):
+    """Insère ou met à jour les fractions CORINE + texture sols d'une station."""
+    soil = soil or {}
+    conn.execute('''
+        INSERT INTO bv_corine (
+            code_sta, frac_urban, frac_agriculture, frac_forest,
+            frac_semi_natural, frac_wetland, frac_water, nb_pixels,
+            sg_clay_0_30cm, sg_sand_0_30cm, sg_silt_0_30cm
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(code_sta) DO UPDATE SET
+            frac_urban        = excluded.frac_urban,
+            frac_agriculture  = excluded.frac_agriculture,
+            frac_forest       = excluded.frac_forest,
+            frac_semi_natural = excluded.frac_semi_natural,
+            frac_wetland      = excluded.frac_wetland,
+            frac_water        = excluded.frac_water,
+            nb_pixels         = excluded.nb_pixels,
+            sg_clay_0_30cm    = excluded.sg_clay_0_30cm,
+            sg_sand_0_30cm    = excluded.sg_sand_0_30cm,
+            sg_silt_0_30cm    = excluded.sg_silt_0_30cm
+    ''', (
+        code_sta,
+        round(fractions['urban'],        4),
+        round(fractions['agriculture'],  4),
+        round(fractions['forest'],       4),
+        round(fractions['semi_natural'], 4),
+        round(fractions['wetland'],      4),
+        round(fractions['water'],        4),
+        nb_pixels,
+        round(soil.get('clay', 0), 2) if soil.get('clay') else None,
+        round(soil.get('sand', 0), 2) if soil.get('sand') else None,
+        round(soil.get('silt', 0), 2) if soil.get('silt') else None,
+    ))
+    conn.commit()
+
+
+def get_corine_bv(code_sta, db_path="./data/insitu_data.db"):
+    """Récupère les fractions CORINE + texture sols d'une station."""
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql_query('''
+        SELECT frac_urban, frac_agriculture, frac_forest,
+               frac_semi_natural, frac_wetland, frac_water,
+               sg_clay_0_30cm, sg_sand_0_30cm, sg_silt_0_30cm
+        FROM bv_corine WHERE code_sta = ?
+    ''', conn, params=(code_sta,))
+    conn.close()
+    if df.empty:
+        return None
+    return df.iloc[0].to_dict()
+
+
+def creer_table_era5_bv_jour(conn):
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS era5_bv_jour (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            mesure_id      INTEGER NOT NULL,
+            code_sta       TEXT NOT NULL,
+            mesure_date    DATE NOT NULL,
+            temp_moy_bv    DECIMAL(6,3),
+            precip_sum_bv  DECIMAL(8,3),
+            pet_sum_bv     DECIMAL(8,3),
+            nb_pixels      INTEGER,
+            created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(mesure_id),
+            FOREIGN KEY (mesure_id) REFERENCES mesures_insitu(id),
+            FOREIGN KEY (code_sta)  REFERENCES stations_insitu(code_sta)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_era5_bv_jour_sta_date ON era5_bv_jour(code_sta, mesure_date)')
+    conn.commit()
+
+
+def inserer_era5_bv_jour(conn, mesure_id, code_sta, mesure_date,
+                          temp_moy, precip_sum, pet_sum, nb_pixels):
+    conn.execute('''
+        INSERT INTO era5_bv_jour (
+            mesure_id, code_sta, mesure_date,
+            temp_moy_bv, precip_sum_bv, pet_sum_bv, nb_pixels
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(mesure_id) DO UPDATE SET
+            temp_moy_bv   = excluded.temp_moy_bv,
+            precip_sum_bv = excluded.precip_sum_bv,
+            pet_sum_bv    = excluded.pet_sum_bv,
+            nb_pixels     = excluded.nb_pixels
+    ''', (mesure_id, code_sta, mesure_date,
+          round(temp_moy, 3)   if temp_moy   is not None else None,
+          round(precip_sum, 3) if precip_sum is not None else None,
+          round(pet_sum, 3)    if pet_sum    is not None else None,
+          nb_pixels))
+    conn.commit()
+
+
+def get_era5_bv_jour(code_sta, db_path="./data/insitu_data.db"):
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql_query('''
+        SELECT mesure_date as date, temp_moy_bv, precip_sum_bv, pet_sum_bv, nb_pixels
+        FROM era5_bv_jour
+        WHERE code_sta = ?
+        ORDER BY mesure_date
+    ''', conn, params=(code_sta,))
+    conn.close()
+    if df.empty:
+        print(f"⚠️  {code_sta} — pas de données ERA5-BV-jour")
+        return None
+    df['date'] = pd.to_datetime(df['date'])
+    print(f"✅ {len(df)} lignes ERA5-BV-jour pour {code_sta}")
+    return df
