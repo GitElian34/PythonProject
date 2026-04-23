@@ -1,112 +1,108 @@
 """
-Exploration des attributs statiques — vérification des données
-Focus sur les fractions CORINE et les textures de sol SoilGrids
+Analyse des attributs statiques (aire_km2, CORINE, sol)
+pour les 20 meilleures et 20 pires stations.
 """
 
+import sqlite3
 import pandas as pd
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
-ATTRS_PATH = "./data/IA/NeuralHydrology/attributes/attributes.csv"
+DB_PATH = "./data/insitu_data.db"
 
-df = pd.read_csv(ATTRS_PATH, index_col='station_id')
-print(f"Stations : {len(df)}")
-print(f"Colonnes : {list(df.columns)}\n")
+TOP20 = [
+    "O787401001", "O303521001", "M322301010", "P613402001", "M010401010",
+    "M814401010", "J341303001", "M351401010", "K212301002", "P821501001",
+    "O504251002", "O709401002", "Y210002001", "J360181001", "H703301001",
+    "L056301001", "A455000201", "M038401020", "H030101001", "A133003001",
+]
 
-# ── Statistiques descriptives ─────────────────────────────────
-print("=" * 60)
-print("STATISTIQUES DESCRIPTIVES")
-print("=" * 60)
-print(df.describe().round(3).to_string())
+FLOP20 = [
+    "Y047403001", "Y503201001", "Y046600501", "O546431001", "P246401001",
+    "V343401001", "A243003001", "J701063001", "Y067406001", "U234502001",
+    "K457221001", "H760201001", "O723403001", "J321302002", "Y551404001",
+    "U221502001", "K640252001", "K437311001", "A623201001", "K035631001",
+]
 
-# ── Vérifications de cohérence ────────────────────────────────
-print("\n" + "=" * 60)
-print("VÉRIFICATIONS DE COHÉRENCE")
-print("=" * 60)
+all_stations = TOP20 + FLOP20
 
-# 1 — Fractions CORINE doivent sommer à ~1
-fracs = ['frac_urban', 'frac_agriculture', 'frac_forest',
-         'frac_semi_natural', 'frac_wetland', 'frac_water']
-df['sum_fracs'] = df[fracs].sum(axis=1)
-pb_somme = df[np.abs(df['sum_fracs'] - 1) > 0.05]
-print(f"\nFractions CORINE sommant à ±5% de 1 : {len(pb_somme)} stations OK")
-if len(pb_somme) > 0:
-    print(f"  ⚠️  {len(pb_somme)} stations avec somme anormale :")
-    print(pb_somme['sum_fracs'].describe().round(3))
+# ── Chargement des attributs ───────────────────────────────────
+conn = sqlite3.connect(DB_PATH)
+ph   = ','.join(['?' for _ in all_stations])
+df   = pd.read_sql(f'''
+    SELECT b.code_sta AS station_id,
+           b.aire_km2,
+           s.lon, s.lat,
+           c.frac_urban, c.frac_agriculture, c.frac_forest,
+           c.frac_semi_natural, c.frac_wetland, c.frac_water,
+           c.sg_clay_0_30cm, c.sg_sand_0_30cm, c.sg_silt_0_30cm
+    FROM bv_data b
+    JOIN bv_corine c       ON b.code_sta = c.code_sta
+    JOIN stations_insitu s ON b.code_sta = s.code_sta
+    WHERE b.code_sta IN ({ph})
+''', conn, params=all_stations)
+conn.close()
 
-# 2 — Textures de sol doivent sommer à ~100%
-df['sum_soil'] = df[['sg_clay_0_30cm', 'sg_sand_0_30cm', 'sg_silt_0_30cm']].sum(axis=1)
-pb_soil = df[np.abs(df['sum_soil'] - 100) > 10]
-print(f"\nTextures sol (clay+sand+silt) ≈ 100% : {len(df) - len(pb_soil)}/{len(df)} stations OK")
-if len(pb_soil) > 0:
-    print(f"  ⚠️  {len(pb_soil)} stations avec somme anormale :")
-    print(df['sum_soil'].describe().round(1))
+df['groupe'] = df['station_id'].apply(lambda x: 'TOP' if x in TOP20 else 'FLOP')
 
-# 3 — Valeurs manquantes
-print(f"\nValeurs manquantes par colonne :")
-nulls = df.isnull().sum()
-for col, n in nulls[nulls > 0].items():
-    print(f"  ⚠️  {col} : {n} NaN")
-if nulls.sum() == 0:
-    print("  ✅ Aucune valeur manquante")
+# ── Variables à analyser ───────────────────────────────────────
+VARS = [
+    'aire_km2',
+    'lon', 'lat',
+    'frac_urban', 'frac_agriculture', 'frac_forest',
+    'frac_semi_natural', 'frac_wetland', 'frac_water',
+    'sg_clay_0_30cm', 'sg_sand_0_30cm', 'sg_silt_0_30cm',
+]
 
-# 4 — Valeurs aberrantes
-print(f"\nValeurs hors plage attendue :")
-checks = {
-    'aire_km2'         : (0, 50000),
-    'frac_urban'       : (0, 1),
-    'frac_forest'      : (0, 1),
-    'sg_clay_0_30cm'   : (0, 80),
-    'sg_sand_0_30cm'   : (0, 95),
-    'sg_silt_0_30cm'   : (0, 80),
-}
-tout_ok = True
-for col, (vmin, vmax) in checks.items():
-    if col not in df.columns:
+# ── Tableau comparatif ─────────────────────────────────────────
+print("=" * 75)
+print("ANALYSE ATTRIBUTS STATIQUES — TOP 20 vs FLOP 20")
+print("=" * 75)
+print(f"{'Variable':<22} {'TOP médiane':>12} {'FLOP médiane':>13} {'TOP moy':>10} {'FLOP moy':>10} {'Δ moy':>8}")
+print("-" * 75)
+
+top_df  = df[df['groupe'] == 'TOP']
+flop_df = df[df['groupe'] == 'FLOP']
+
+for var in VARS:
+    if var not in df.columns:
         continue
-    hors = df[(df[col] < vmin) | (df[col] > vmax)]
-    if len(hors) > 0:
-        print(f"  ⚠️  {col} : {len(hors)} valeurs hors [{vmin}, {vmax}]")
-        print(f"       min={df[col].min():.2f} max={df[col].max():.2f}")
-        tout_ok = False
-if tout_ok:
-    print("  ✅ Toutes les valeurs dans les plages attendues")
+    t_med = top_df[var].median()
+    f_med = flop_df[var].median()
+    t_moy = top_df[var].mean()
+    f_moy = flop_df[var].mean()
+    delta = t_moy - f_moy
 
-# ── Visualisation ─────────────────────────────────────────────
-fig, axes = plt.subplots(3, 4, figsize=(18, 12))
-axes = axes.flatten()
+    # Marquer les différences notables (>20% de la plage)
+    flag = " ◄" if abs(delta) > 0.05 * max(abs(t_moy), abs(f_moy), 1) else ""
 
-cols_to_plot = [c for c in df.columns if c != 'sum_fracs' and c != 'sum_soil']
+    print(f"  {var:<20} {t_med:>12.3f} {f_med:>13.3f} {t_moy:>10.3f} {f_moy:>10.3f} {delta:>+8.3f}{flag}")
 
-for i, col in enumerate(cols_to_plot[:12]):
-    ax = axes[i]
-    data = df[col].dropna()
-    ax.hist(data, bins=30, color='steelblue', edgecolor='white', alpha=0.8)
-    ax.axvline(data.mean(),   color='red',    ls='--', lw=1.5, label=f'mean={data.mean():.2f}')
-    ax.axvline(data.median(), color='orange', ls='--', lw=1.5, label=f'med={data.median():.2f}')
-    ax.set_title(col, fontsize=10, fontweight='bold')
-    ax.set_xlabel('Valeur')
-    ax.set_ylabel('Nb stations')
-    ax.legend(fontsize=7)
-    ax.grid(alpha=0.3)
+# ── Distribution aire_km2 ──────────────────────────────────────
+print(f"\n{'─'*55}")
+print("DISTRIBUTION aire_km2")
+print(f"{'─'*55}")
+for groupe, gdf in df.groupby('groupe'):
+    q = gdf['aire_km2'].quantile([0.25, 0.5, 0.75])
+    print(f"  {groupe:<5} : min={gdf['aire_km2'].min():>8.0f}  "
+          f"Q25={q[0.25]:>8.0f}  med={q[0.50]:>8.0f}  "
+          f"Q75={q[0.75]:>8.0f}  max={gdf['aire_km2'].max():>8.0f}")
 
-# Masquer les axes inutilisés
-for j in range(len(cols_to_plot), 12):
-    axes[j].set_visible(False)
+# ── Répartition géographique (lat/lon) ────────────────────────
+print(f"\n{'─'*55}")
+print("RÉPARTITION GÉOGRAPHIQUE")
+print(f"{'─'*55}")
+for groupe, gdf in df.groupby('groupe'):
+    print(f"  {groupe:<5} : lon [{gdf['lon'].min():.1f} → {gdf['lon'].max():.1f}]  "
+          f"lat [{gdf['lat'].min():.1f} → {gdf['lat'].max():.1f}]")
 
-plt.suptitle('Distribution des attributs statiques', fontsize=14, fontweight='bold', y=1.01)
-plt.tight_layout()
-plt.savefig("static_attrs_distribution.png", dpi=150, bbox_inches='tight')
-print(f"\n✅ Figure sauvegardée : static_attrs_distribution.png")
+# ── Dominante occupation du sol ───────────────────────────────
+print(f"\n{'─'*55}")
+print("OCCUPATION DU SOL DOMINANTE (par station)")
+print(f"{'─'*55}")
+corine_cols = ['frac_urban', 'frac_agriculture', 'frac_forest',
+               'frac_semi_natural', 'frac_wetland', 'frac_water']
 
-# ── Top 5 stations aberrantes ─────────────────────────────────
-print("\n" + "=" * 60)
-print("TOP 5 STATIONS PAR AIRE (les plus grandes)")
-print("=" * 60)
-print(df.nlargest(5, 'aire_km2')[['aire_km2'] + fracs].round(3).to_string())
-
-print("\nTOP 5 STATIONS LES PLUS URBAINES")
-print("=" * 60)
-print(df.nlargest(5, 'frac_urban')[['frac_urban', 'frac_agriculture', 'frac_forest', 'aire_km2']].round(3).to_string())
+for groupe in ['TOP', 'FLOP']:
+    gdf = df[df['groupe'] == groupe]
+    dominant = gdf[corine_cols].idxmax(axis=1).str.replace('frac_', '')
+    print(f"  {groupe:<5} : {dominant.value_counts().to_dict()}")

@@ -389,3 +389,80 @@ def get_era5_bv_jour(code_sta, db_path="./data/insitu_data.db"):
     df['date'] = pd.to_datetime(df['date'])
     print(f"✅ {len(df)} lignes ERA5-BV-jour pour {code_sta}")
     return df
+
+
+def creer_table_roe(conn):
+    """Crée la table roe_obstacles dans la BDD."""
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS roe_obstacles (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            roe_id  TEXT,
+            nom     TEXT,
+            type    TEXT,
+            lon     REAL NOT NULL,
+            lat     REAL NOT NULL
+        )
+    ''')
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_roe_lat ON roe_obstacles(lat)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_roe_lon ON roe_obstacles(lon)")
+    conn.commit()
+
+
+def inserer_roe(conn, roe_id, nom, type_ouvrage, lon, lat):
+    """Insère un obstacle ROE dans la table."""
+    conn.execute('''
+        INSERT INTO roe_obstacles (roe_id, nom, type, lon, lat)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (roe_id, nom, type_ouvrage, lon, lat))
+
+
+def get_roe_count(conn):
+    """Retourne le nombre d'obstacles dans la table."""
+    return conn.execute("SELECT COUNT(*) FROM roe_obstacles").fetchone()[0]
+
+
+
+def ajouter_colonne_dist_barrage(conn):
+    """Ajoute la colonne dist_barrage_m dans stations_insitu si elle n'existe pas."""
+    try:
+        conn.execute("ALTER TABLE stations_insitu ADD COLUMN dist_barrage_m INTEGER")
+        conn.commit()
+        print("✅ Colonne dist_barrage_m ajoutée")
+    except Exception:
+        pass  # colonne déjà existante
+
+
+def mettre_a_jour_distances_barrages(conn):
+    """
+    Calcule la distance de chaque station au barrage ROE le plus proche
+    et met à jour la colonne dist_barrage_m dans stations_insitu.
+    """
+    import numpy as np
+    import pandas as pd
+
+    df_stations = pd.read_sql(
+        "SELECT code_sta, lon, lat FROM stations_insitu WHERE lon IS NOT NULL AND lat IS NOT NULL",
+        conn
+    )
+    df_roe = pd.read_sql("SELECT lon, lat FROM roe_obstacles", conn)
+
+    R       = 6_371_000.0
+    roe_lat = np.radians(df_roe['lat'].values)
+    roe_lon = np.radians(df_roe['lon'].values)
+
+    updates = []
+    for _, sta in df_stations.iterrows():
+        lat1 = np.radians(sta['lat'])
+        lon1 = np.radians(sta['lon'])
+        dlat = roe_lat - lat1
+        dlon = roe_lon - lon1
+        a    = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(roe_lat) * np.sin(dlon/2)**2
+        dist = R * 2 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
+        updates.append((int(dist.min()), sta['code_sta']))
+
+    conn.executemany(
+        "UPDATE stations_insitu SET dist_barrage_m = ? WHERE code_sta = ?",
+        updates
+    )
+    conn.commit()
+    print(f"✅ {len(updates)} stations mises à jour avec dist_barrage_m")

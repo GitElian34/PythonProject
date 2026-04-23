@@ -1,13 +1,42 @@
 import xarray as xr
+import pandas as pd
 import numpy as np
+import random
+from pathlib import Path
 
-ds = xr.open_dataset('./data/ERA5/usable_data_LAND_France/2016/07/data_0.nc')
-pev = ds['pev']
+NC_DIR = Path("./data/IA/NeuralHydrology/time_series")
+LAGS   = [1, 5, 10, 27]
+N      = 500
+SEED   = 42
 
-# Même pixel, toutes les heures du 15 juillet
-lat_idx, lon_idx = 60, 80
-series = pev.isel(latitude=lat_idx, longitude=lon_idx).values
+random.seed(SEED)
+all_nc = list(NC_DIR.glob("*.nc"))
+selected = random.sample(all_nc, min(N, len(all_nc)))
+print(f"{len(selected)} stations sélectionnées\n")
 
-print("Heures 0-47 (juillet) :")
-for i, v in enumerate(series[14*24:14*24+48]):
-    print(f"  h{i:02d} : {v*1000:.4f} mm")
+results = {lag: [] for lag in LAGS}
+
+for nc_path in selected:
+    try:
+        ds = xr.open_dataset(nc_path)
+        wl = pd.Series(ds["water_level"].values)
+        ds.close()
+
+        valid = wl.dropna()
+        if len(valid) < 100:
+            continue
+
+        for lag in LAGS:
+            ac = wl.autocorr(lag=lag)
+            if not np.isnan(ac):
+                results[lag].append(ac)
+
+    except Exception:
+        continue
+
+print(f"{'Lag':>6}  {'Moyenne':>10}  {'Médiane':>10}  {'Std':>8}  {'N':>6}")
+print(f"  {'-'*46}")
+for lag in LAGS:
+    vals = results[lag]
+    print(f"  lag-{lag:<3}  {np.mean(vals):>10.3f}  {np.median(vals):>10.3f}  "
+          f"{np.std(vals):>8.3f}  {len(vals):>6}")

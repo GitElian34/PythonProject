@@ -1,182 +1,190 @@
 """
-Exploration des attributs dynamiques — vérification des données
-Précipitation, température, PET et water_level
+Analyse des données dynamiques (précipitation, température, PET, water_level)
+pour les 20 meilleures et 20 pires stations — sur la période de test 2024-2025.
 """
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import xarray as xr
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import glob
-import os
+import matplotlib.gridspec as gridspec
+from pathlib import Path
+from scipy import stats
 
-TIME_SERIES_DIR = "./data/IA/NeuralHydrology/time_series/"
-OUTPUT_DIR      = "./data/IA/NeuralHydrology/Visualisation/"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+NC_DIR     = Path("./data/IA/NeuralHydrology/time_series")
+OUTPUT_DIR = Path("./data/IA/NeuralHydrology/")
+TEST_START = "2024-01-01"
+TEST_END   = "2025-12-31"
+TRAIN_START = "2016-01-01"
+TRAIN_END   = "2023-12-31"
 
-VARIABLES = ['precipitation', 'temperature', 'pet', 'water_level']
-
-# ── Chargement de tous les fichiers NetCDF ────────────────────
-nc_files = sorted(glob.glob(os.path.join(TIME_SERIES_DIR, "*.nc")))
-print(f"Fichiers NetCDF trouvés : {len(nc_files)}")
-
-all_data = []
-for path in nc_files:
-    station_id = os.path.basename(path).replace(".nc", "")
-    try:
-        ds = xr.open_dataset(path)
-        df = ds.to_dataframe()
-        df['station_id'] = station_id
-        all_data.append(df)
-    except Exception as e:
-        print(f"  ⚠️  {station_id} — erreur lecture : {e}")
-
-df_all = pd.concat(all_data)
-print(f"Total lignes : {len(df_all)}")
-print(f"Période      : {df_all.index.min()} → {df_all.index.max()}\n")
-
-# ── Statistiques descriptives ─────────────────────────────────
-print("=" * 60)
-print("STATISTIQUES DESCRIPTIVES (toutes stations confondues)")
-print("=" * 60)
-print(df_all[VARIABLES].describe().round(3).to_string())
-
-# ── Vérifications de cohérence ────────────────────────────────
-print("\n" + "=" * 60)
-print("VÉRIFICATIONS DE COHÉRENCE")
-print("=" * 60)
-
-# Précipitations
-precip_neg = (df_all['precipitation'] < 0).sum()
-precip_max = df_all['precipitation'].max()
-print(f"\nPrécipitation :")
-print(f"  Valeurs négatives     : {precip_neg}")
-print(f"  Max journalier        : {precip_max:.1f} mm  {'⚠️  suspect si >300mm' if precip_max > 300 else '✅'}")
-print(f"  % jours sans pluie    : {(df_all['precipitation'] == 0).mean():.1%}")
-
-# Température
-temp_min = df_all['temperature'].min()
-temp_max = df_all['temperature'].max()
-print(f"\nTempérature :")
-print(f"  Min : {temp_min:.1f}°C  {'⚠️  suspect si < -20°C' if temp_min < -20 else '✅'}")
-print(f"  Max : {temp_max:.1f}°C  {'⚠️  suspect si > 45°C'  if temp_max > 45  else '✅'}")
-
-# PET
-pet_neg  = (df_all['pet'] < 0).sum()
-pet_max  = df_all['pet'].max()
-print(f"\nPET :")
-print(f"  Valeurs négatives     : {pet_neg}  {'⚠️  vérifier unités' if pet_neg > 0 else '✅'}")
-print(f"  Max journalier        : {pet_max:.2f} mm  {'⚠️  suspect si >15mm' if pet_max > 15 else '✅'}")
-print(f"  Moyenne annuelle est. : {df_all['pet'].mean() * 365:.0f} mm/an")
-
-# Water level
-wl_nan = df_all['water_level'].isna().sum()
-wl_nan_pct = wl_nan / len(df_all)
-print(f"\nWater level (normalisé) :")
-print(f"  NaN : {wl_nan} ({wl_nan_pct:.1%}) {'⚠️  beaucoup de NaN' if wl_nan_pct > 0.3 else '✅'}")
-print(f"  Min : {df_all['water_level'].min():.3f}")
-print(f"  Max : {df_all['water_level'].max():.3f}")
-print(f"  Std : {df_all['water_level'].std():.3f}  (attendu ~1.0 après normalisation)")
-
-# NaN par variable
-print(f"\nNaN par variable :")
-for col in VARIABLES:
-    n = df_all[col].isna().sum()
-    pct = n / len(df_all)
-    flag = '⚠️ ' if pct > 0.1 else '✅'
-    print(f"  {flag} {col:20s} : {n:6d} NaN ({pct:.1%})")
-
-# ── Saisonnalité ──────────────────────────────────────────────
-print("\n" + "=" * 60)
-print("SAISONNALITÉ MOYENNE (toutes stations)")
-print("=" * 60)
-df_all['month'] = pd.to_datetime(df_all.index).month
-monthly = df_all.groupby('month')[['precipitation', 'temperature', 'pet']].mean().round(2)
-print(monthly.to_string())
-
-# ── Figure 1 : Distributions ─────────────────────────────────
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-axes = axes.flatten()
-
-configs = [
-    ('precipitation', 'Précipitation (mm/j)', 'steelblue',  (0, None)),
-    ('temperature',   'Température (°C)',      'tomato',     (None, None)),
-    ('pet',           'PET (mm/j)',            'forestgreen',(0, None)),
-    ('water_level',   'Water level (normalisé)','purple',    (None, None)),
+TOP20 = [
+    "O787401001", "O303521001", "M322301010", "P613402001", "M010401010",
+    "M814401010", "J341303001", "M351401010", "K212301002", "P821501001",
+    "O504251002", "O709401002", "Y210002001", "J360181001", "H703301001",
+    "L056301001", "A455000201", "M038401020", "H030101001", "A133003001",
 ]
 
-for ax, (col, label, color, (vmin, vmax)) in zip(axes, configs):
-    data = df_all[col].dropna()
-    if vmin is not None:
-        data = data[data >= vmin]
-    if vmax is not None:
-        data = data[data <= vmax]
-    ax.hist(data, bins=50, color=color, edgecolor='white', alpha=0.8)
-    ax.axvline(data.mean(),   color='red',    ls='--', lw=1.5,
-               label=f'mean={data.mean():.2f}')
-    ax.axvline(data.median(), color='orange', ls='--', lw=1.5,
-               label=f'med={data.median():.2f}')
-    ax.set_title(label, fontsize=12, fontweight='bold')
-    ax.set_xlabel('Valeur')
-    ax.set_ylabel('Nb observations')
-    ax.legend(fontsize=9)
-    ax.grid(alpha=0.3)
+FLOP20 = [
+    "Y047403001", "Y503201001", "Y046600501", "O546431001", "P246401001",
+    "V343401001", "A243003001", "J701063001", "Y067406001", "U234502001",
+    "K457221001", "H760201001", "O723403001", "J321302002", "Y551404001",
+    "U221502001", "K640252001", "K437311001", "A623201001", "K035631001",
+]
 
-plt.suptitle('Distribution des variables dynamiques\n(toutes stations, toute la période)',
-             fontsize=13, fontweight='bold')
-plt.tight_layout()
-out1 = os.path.join(OUTPUT_DIR, "dynamic_distributions.png")
-plt.savefig(out1, dpi=150, bbox_inches='tight')
-print(f"\n✅ Figure 1 sauvegardée : {out1}")
+VARS = ['precipitation', 'temperature', 'pet', 'water_level']
 
-# ── Figure 2 : Saisonnalité ───────────────────────────────────
-fig, axes = plt.subplots(1, 3, figsize=(16, 5))
-mois_labels = ['J','F','M','A','M','J','J','A','S','O','N','D']
+# ═══════════════════════════════════════════════════════════════
+# CHARGEMENT
+# ═══════════════════════════════════════════════════════════════
+def load_stats(stations, period_start, period_end):
+    """Charge les stats dynamiques pour un groupe de stations sur une période."""
+    records = []
+    for sid in stations:
+        nc_path = NC_DIR / f"{sid}.nc"
+        if not nc_path.exists():
+            continue
+        try:
+            ds  = xr.open_dataset(nc_path)
+            ds_p = ds.sel(date=slice(period_start, period_end))
+            rec = {'station_id': sid}
+            for var in VARS:
+                if var not in ds_p:
+                    continue
+                vals = ds_p[var].values
+                valid = vals[~np.isnan(vals)]
+                if len(valid) == 0:
+                    continue
+                rec[f'{var}_mean']   = np.mean(valid)
+                rec[f'{var}_std']    = np.std(valid)
+                rec[f'{var}_median'] = np.median(valid)
+                rec[f'{var}_p95']    = np.percentile(valid, 95)
+                rec[f'{var}_p05']    = np.percentile(valid, 5)
+                rec[f'{var}_nan_pct']= np.mean(np.isnan(vals)) * 100
+                # Autocorrélation lag-1 (mémoire du signal)
+                if len(valid) > 10:
+                    rec[f'{var}_autocorr'] = pd.Series(valid).autocorr(lag=1)
+            ds.close()
+            records.append(rec)
+        except Exception as e:
+            print(f"  ⚠️  {sid} : {e}")
+            continue
+    return pd.DataFrame(records)
 
-for ax, col, color, label in zip(
-    axes,
-    ['precipitation', 'temperature', 'pet'],
-    ['steelblue', 'tomato', 'forestgreen'],
-    ['Précipitation (mm/j)', 'Température (°C)', 'PET (mm/j)']
-):
-    monthly_mean = df_all.groupby('month')[col].mean()
-    monthly_std  = df_all.groupby('month')[col].std()
-    ax.bar(range(1, 13), monthly_mean, color=color, alpha=0.7, label='Moyenne')
-    ax.errorbar(range(1, 13), monthly_mean, yerr=monthly_std,
-                fmt='none', color='black', capsize=3, alpha=0.5)
-    ax.set_xticks(range(1, 13))
-    ax.set_xticklabels(mois_labels)
-    ax.set_title(label, fontsize=11, fontweight='bold')
-    ax.set_xlabel('Mois')
-    ax.grid(alpha=0.3, axis='y')
+print("Chargement données test (2024-2025)...")
+top_test  = load_stats(TOP20,  TEST_START,  TEST_END)
+flop_test = load_stats(FLOP20, TEST_START,  TEST_END)
 
-plt.suptitle('Saisonnalité des forçages ERA5\n(moyenne ± std sur toutes stations)',
-             fontsize=13, fontweight='bold')
-plt.tight_layout()
-out2 = os.path.join(OUTPUT_DIR, "dynamic_seasonality.png")
-plt.savefig(out2, dpi=150, bbox_inches='tight')
-print(f"✅ Figure 2 sauvegardée : {out2}")
+print("Chargement données train (2016-2023)...")
+top_train  = load_stats(TOP20,  TRAIN_START, TRAIN_END)
+flop_train = load_stats(FLOP20, TRAIN_START, TRAIN_END)
 
-# ── Figure 3 : Série temporelle d'une station exemple ────────
-sample_station = os.path.basename(nc_files[0]).replace(".nc", "")
-df_sample = df_all[df_all['station_id'] == sample_station].copy()
+top_test['groupe']   = 'TOP'
+flop_test['groupe']  = 'FLOP'
+top_train['groupe']  = 'TOP'
+flop_train['groupe'] = 'FLOP'
 
-fig, axes = plt.subplots(4, 1, figsize=(16, 12), sharex=True)
-for ax, (col, label, color) in zip(axes, [
-    ('precipitation', 'Précipitation (mm/j)', 'steelblue'),
-    ('temperature',   'Température (°C)',      'tomato'),
-    ('pet',           'PET (mm/j)',            'forestgreen'),
-    ('water_level',   'Water level (norm.)',   'purple'),
-]):
-    ax.plot(df_sample.index, df_sample[col], color=color, lw=0.8, alpha=0.8)
-    ax.set_ylabel(label, fontsize=9)
-    ax.grid(alpha=0.3)
+df_test  = pd.concat([top_test,  flop_test],  ignore_index=True)
+df_train = pd.concat([top_train, flop_train], ignore_index=True)
 
-axes[0].set_title(f'Série temporelle complète — station {sample_station}',
-                  fontsize=12, fontweight='bold')
-plt.tight_layout()
-out3 = os.path.join(OUTPUT_DIR, "dynamic_timeseries_example.png")
-plt.savefig(out3, dpi=150, bbox_inches='tight')
-print(f"✅ Figure 3 sauvegardée : {out3}")
+# ═══════════════════════════════════════════════════════════════
+# TABLEAU COMPARATIF — PÉRIODE DE TEST
+# ═══════════════════════════════════════════════════════════════
+print("\n" + "=" * 80)
+print("DONNÉES DYNAMIQUES — PÉRIODE TEST (2024-2025)")
+print("=" * 80)
+
+metrics = ['mean', 'std', 'p05', 'median', 'p95', 'nan_pct', 'autocorr']
+
+for var in VARS:
+    cols = [f'{var}_{m}' for m in metrics if f'{var}_{m}' in df_test.columns]
+    if not cols:
+        continue
+
+    print(f"\n── {var.upper()} ──────────────────────────────────────────")
+    print(f"  {'Métrique':<20} {'TOP moy':>10} {'FLOP moy':>11} {'Δ':>8}  {'sign.':>6}")
+    print(f"  {'-'*58}")
+
+    top_g  = df_test[df_test['groupe'] == 'TOP']
+    flop_g = df_test[df_test['groupe'] == 'FLOP']
+
+    for col in cols:
+        metric_name = col.replace(f'{var}_', '')
+        t_vals = top_g[col].dropna()
+        f_vals = flop_g[col].dropna()
+        if len(t_vals) == 0 or len(f_vals) == 0:
+            continue
+        t_moy = t_vals.mean()
+        f_moy = f_vals.mean()
+        delta = t_moy - f_moy
+
+        # Test de Wilcoxon (non-paramétrique)
+        try:
+            _, pval = stats.mannwhitneyu(t_vals, f_vals, alternative='two-sided')
+            sig = "***" if pval < 0.01 else ("**" if pval < 0.05 else ("*" if pval < 0.1 else ""))
+        except Exception:
+            sig = ""
+
+        flag = " ◄" if sig in ["*", "**", "***"] else ""
+        print(f"  {metric_name:<20} {t_moy:>10.3f} {f_moy:>11.3f} {delta:>+8.3f}  {sig:>6}{flag}")
+
+# ═══════════════════════════════════════════════════════════════
+# DÉRIVE TRAIN → TEST (distribution shift)
+# ═══════════════════════════════════════════════════════════════
+print("\n\n" + "=" * 80)
+print("DÉRIVE TRAIN→TEST — water_level (distribution shift)")
+print("=" * 80)
+print(f"  {'Groupe':<8} {'moy_train':>10} {'moy_test':>10} {'Δ_mean':>8} "
+      f"{'std_train':>10} {'std_test':>10} {'Δ_std':>8}")
+print(f"  {'-'*68}")
+
+for groupe, g_train, g_test in [('TOP',  top_train,  top_test),
+                                  ('FLOP', flop_train, flop_test)]:
+    col = 'water_level_mean'
+    if col not in g_train.columns or col not in g_test.columns:
+        continue
+    m_train = g_train[col].mean()
+    m_test  = g_test[col].mean()
+    s_train = g_train['water_level_std'].mean()
+    s_test  = g_test['water_level_std'].mean()
+    print(f"  {groupe:<8} {m_train:>10.3f} {m_test:>10.3f} {m_test-m_train:>+8.3f} "
+          f"{s_train:>10.3f} {s_test:>10.3f} {s_test-s_train:>+8.3f}")
+
+# ═══════════════════════════════════════════════════════════════
+# PLOTS
+# ═══════════════════════════════════════════════════════════════
+print("\nGénération des plots...")
+
+fig, axes = plt.subplots(2, 4, figsize=(18, 8), constrained_layout=True)
+fig.suptitle("Distributions dynamiques — TOP 20 vs FLOP 20 (2024-2025)", fontsize=13)
+
+plot_metrics = [
+    ('water_level_mean',   'WL mean (norm.)'),
+    ('water_level_std',    'WL std (norm.)'),
+    ('water_level_autocorr', 'WL autocorr lag-1'),
+    ('water_level_nan_pct',  'WL NaN %'),
+    ('precipitation_mean', 'Précip. moy. (mm/j)'),
+    ('temperature_mean',   'Temp. moy. (°C)'),
+    ('pet_mean',           'PET moy. (mm/j)'),
+    ('precipitation_std',  'Précip. std'),
+]
+
+colors = {'TOP': 'steelblue', 'FLOP': 'crimson'}
+
+for ax, (col, label) in zip(axes.flat, plot_metrics):
+    for groupe, gdf in df_test.groupby('groupe'):
+        vals = gdf[col].dropna()
+        if len(vals) == 0:
+            continue
+        ax.hist(vals, bins=12, alpha=0.55, color=colors[groupe],
+                label=f"{groupe} (n={len(vals)})", density=True)
+        ax.axvline(vals.mean(), color=colors[groupe], lw=2, ls='--')
+
+    ax.set_title(label, fontsize=9)
+    ax.legend(fontsize=7)
+    ax.grid(True, alpha=0.3)
+
+out_path = Path("./plots_dynamic_analysis.png")
+fig.savefig(out_path, dpi=150, bbox_inches='tight')
+plt.close()
+print(f"  ✅ Plot sauvegardé → {out_path}")

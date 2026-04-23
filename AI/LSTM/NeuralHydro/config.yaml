@@ -11,9 +11,9 @@ data_dir: ./data/IA/NeuralHydrology
 
 # Fichiers listant les stations (un id par ligne)
 train_basin_file: ./AI/LSTM/NeuralHydro/train_basins.txt
-validation_basin_file: ./AI/LSTM/NeuralHydro/val_basins.txt
+validation_basin_file: ./AI/LSTM/NeuralHydro/train_basins.txt
 test_basin_file: ./AI/LSTM/NeuralHydro/val_basins.txt
-# ═══════════════════════════════════════════════
+# ═══════════════════════════════════════════════>>
 # PÉRIODES
 # ═══════════════════════════════════════════════
 train_start_date: "01/01/2016"
@@ -26,6 +26,12 @@ validation_end_date: "31/12/2025"
 # ═══════════════════════════════════════════════
 target_variables:
   - water_level
+lagged_features:
+  water_level:
+    - 27             # génère water_level_shift1
+
+autoregressive_inputs:
+  - water_level_shift27
 
 dynamic_inputs:
   - precipitation
@@ -34,6 +40,8 @@ dynamic_inputs:
 
 static_attributes:
   - aire_km2
+  - lon
+  - lat
   - frac_urban
   - frac_forest
   - frac_agriculture
@@ -48,18 +56,19 @@ static_attributes:
 #  type: fc
 #  hiddens: [20, 10]
 #  activation: tanh
-
-
-dynamics_embedding:
-  type: fc
-  hiddens: [16, 8]
-  activation: tanh
-# ═══════════════════════════════════════════════
+#
+#
+#dynamics_embedding:
+#  type: fc
+#  hiddens: [16, 8]
+#  activation: tanh
+## ═══════════════════════════════════════════════
 # ARCHITECTURE
 # ═══════════════════════════════════════════════
-model: cudalstm
+model: arlstm
+
 head: regression
-hidden_size: 128
+hidden_size: 256
 seq_length: 365
 predict_last_n: 1
 
@@ -78,12 +87,12 @@ loss: NSE
 
 initial_forget_bias: 3
 save_validation_results: True
-max_updates_per_epoch: 500
+max_updates_per_epoch: 2000
 # ═══════════════════════════════════════════════
 # VALIDATION
 # ═══════════════════════════════════════════════
 validate_every: 5
-validate_n_random_basins: 50
+validate_n_random_basins: 200
 metrics:
   - NSE
   - KGE
