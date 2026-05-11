@@ -1,190 +1,157 @@
-"""
-Analyse des données dynamiques (précipitation, température, PET, water_level)
-pour les 20 meilleures et 20 pires stations — sur la période de test 2024-2025.
-"""
-
+import xarray as xr
 import numpy as np
 import pandas as pd
-import xarray as xr
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from pathlib import Path
-from scipy import stats
+import glob
+import os
+import random
 
-NC_DIR     = Path("./data/IA/NeuralHydrology/time_series")
-OUTPUT_DIR = Path("./data/IA/NeuralHydrology/")
-TEST_START = "2024-01-01"
-TEST_END   = "2025-12-31"
-TRAIN_START = "2016-01-01"
-TRAIN_END   = "2023-12-31"
+# ── Config ───────────────────────────────────────────────────────────────────
+NC_DIR = "./data/IA/NeuralHydrology_feat10j/time_series/"
+ATTR_PATH = "./data/IA/NeuralHydrology_feat10j/attributes/attributes.csv"
+N_SAMPLE = 1000
+SEED = 42
 
-TOP20 = [
-    "O787401001", "O303521001", "M322301010", "P613402001", "M010401010",
-    "M814401010", "J341303001", "M351401010", "K212301002", "P821501001",
-    "O504251002", "O709401002", "Y210002001", "J360181001", "H703301001",
-    "L056301001", "A455000201", "M038401020", "H030101001", "A133003001",
+# Seuil amplitude max acceptable par ordre de Strahler
+AMPLITUDE_SEUILS = {1: 3, 2: 5, 3: 7, 4: 10, 5: 15, 6: 25, 7: 40}
+
+# ── Chargement attributs statiques ───────────────────────────────────────────
+attrs = pd.read_csv(ATTR_PATH, index_col=0)
+
+# ── Chargement de N_SAMPLE fichiers aléatoires ───────────────────────────────
+all_files = glob.glob(os.path.join(NC_DIR, "*.nc"))
+random.seed(SEED)
+sampled = random.sample(all_files, min(N_SAMPLE, len(all_files)))
+print(f"Fichiers disponibles : {len(all_files)} | Analysés : {len(sampled)}")
+
+DYNAMIC_VARS = [
+    "precipitation_J0", "temperature_J0", "pet_J0",
+    "precip_mean_J3", "temp_mean_J3", "pet_mean_J3",
+    "precip_mean_J10", "temp_mean_J10", "pet_mean_J10",
+    "water_level"
 ]
 
-FLOP20 = [
-    "Y047403001", "Y503201001", "Y046600501", "O546431001", "P246401001",
-    "V343401001", "A243003001", "J701063001", "Y067406001", "U234502001",
-    "K457221001", "H760201001", "O723403001", "J321302002", "Y551404001",
-    "U221502001", "K640252001", "K437311001", "A623201001", "K035631001",
-]
+records = []
+problematic = []
 
-VARS = ['precipitation', 'temperature', 'pet', 'water_level']
+for fpath in sampled:
+    station = os.path.basename(fpath).replace(".nc", "")
+    try:
+        ds = xr.open_dataset(fpath)
+        rec = {"station": station, "n_points": len(ds["date"])}
 
-# ═══════════════════════════════════════════════════════════════
-# CHARGEMENT
-# ═══════════════════════════════════════════════════════════════
-def load_stats(stations, period_start, period_end):
-    """Charge les stats dynamiques pour un groupe de stations sur une période."""
-    records = []
-    for sid in stations:
-        nc_path = NC_DIR / f"{sid}.nc"
-        if not nc_path.exists():
-            continue
-        try:
-            ds  = xr.open_dataset(nc_path)
-            ds_p = ds.sel(date=slice(period_start, period_end))
-            rec = {'station_id': sid}
-            for var in VARS:
-                if var not in ds_p:
-                    continue
-                vals = ds_p[var].values
-                valid = vals[~np.isnan(vals)]
-                if len(valid) == 0:
-                    continue
-                rec[f'{var}_mean']   = np.mean(valid)
-                rec[f'{var}_std']    = np.std(valid)
-                rec[f'{var}_median'] = np.median(valid)
-                rec[f'{var}_p95']    = np.percentile(valid, 95)
-                rec[f'{var}_p05']    = np.percentile(valid, 5)
-                rec[f'{var}_nan_pct']= np.mean(np.isnan(vals)) * 100
-                # Autocorrélation lag-1 (mémoire du signal)
-                if len(valid) > 10:
-                    rec[f'{var}_autocorr'] = pd.Series(valid).autocorr(lag=1)
-            ds.close()
-            records.append(rec)
-        except Exception as e:
-            print(f"  ⚠️  {sid} : {e}")
-            continue
-    return pd.DataFrame(records)
+        for var in DYNAMIC_VARS:
+            if var not in ds:
+                rec[f"{var}_missing"] = True
+                continue
+            vals = ds[var].values.astype(float)
+            nan_count = np.isnan(vals).sum()
+            rec[f"{var}_nan"] = nan_count
+            rec[f"{var}_mean"] = np.nanmean(vals)
+            rec[f"{var}_std"] = np.nanstd(vals)
+            rec[f"{var}_min"] = np.nanmin(vals)
+            rec[f"{var}_max"] = np.nanmax(vals)
+            rec[f"{var}_pct_nan"] = nan_count / len(vals) * 100
 
-print("Chargement données test (2024-2025)...")
-top_test  = load_stats(TOP20,  TEST_START,  TEST_END)
-flop_test = load_stats(FLOP20, TEST_START,  TEST_END)
+        wl = ds["water_level"].values.astype(float)
+        flags = []
 
-print("Chargement données train (2016-2023)...")
-top_train  = load_stats(TOP20,  TRAIN_START, TRAIN_END)
-flop_train = load_stats(FLOP20, TRAIN_START, TRAIN_END)
+        strahler = attrs.loc[station, "strahler"] if station in attrs.index else None
+        seuil_amp = AMPLITUDE_SEUILS.get(int(strahler), 20) if strahler is not None else 20
+        rec["strahler"] = int(strahler) if strahler is not None else -1
 
-top_test['groupe']   = 'TOP'
-flop_test['groupe']  = 'FLOP'
-top_train['groupe']  = 'TOP'
-flop_train['groupe'] = 'FLOP'
+        if np.isnan(wl).all():
+            flags.append("water_level 100% NaN")
+        else:
+            if np.nanstd(wl) < 0.01:
+                flags.append(f"série plate (std={np.nanstd(wl):.4f})")
+            amplitude = np.nanmax(wl) - np.nanmin(wl)
+            if amplitude > seuil_amp:
+                s_str = str(int(strahler)) if strahler is not None else "?"
+                flags.append(f"amplitude suspecte ({np.nanmin(wl):.1f}→{np.nanmax(wl):.1f}m | S{s_str}, seuil={seuil_amp}m)")
+            if np.isnan(wl).sum() / len(wl) > 0.5:
+                flags.append(">50% NaN water_level")
 
-df_test  = pd.concat([top_test,  flop_test],  ignore_index=True)
-df_train = pd.concat([top_train, flop_train], ignore_index=True)
+        prec = ds["precipitation_J0"].values.astype(float)
+        if not np.isnan(prec).all() and np.nanmin(prec) < -0.1:
+            flags.append(f"précip négative (min={np.nanmin(prec):.2f})")
 
-# ═══════════════════════════════════════════════════════════════
-# TABLEAU COMPARATIF — PÉRIODE DE TEST
-# ═══════════════════════════════════════════════════════════════
-print("\n" + "=" * 80)
-print("DONNÉES DYNAMIQUES — PÉRIODE TEST (2024-2025)")
-print("=" * 80)
+        rec["flags"] = " | ".join(flags) if flags else ""
+        if flags:
+            problematic.append({"station": station, "strahler": rec["strahler"], "flags": " | ".join(flags)})
 
-metrics = ['mean', 'std', 'p05', 'median', 'p95', 'nan_pct', 'autocorr']
+        records.append(rec)
+        ds.close()
 
-for var in VARS:
-    cols = [f'{var}_{m}' for m in metrics if f'{var}_{m}' in df_test.columns]
-    if not cols:
-        continue
+    except Exception as e:
+        problematic.append({"station": station, "strahler": -1, "flags": f"ERREUR: {e}"})
 
-    print(f"\n── {var.upper()} ──────────────────────────────────────────")
-    print(f"  {'Métrique':<20} {'TOP moy':>10} {'FLOP moy':>11} {'Δ':>8}  {'sign.':>6}")
-    print(f"  {'-'*58}")
+df = pd.DataFrame(records)
 
-    top_g  = df_test[df_test['groupe'] == 'TOP']
-    flop_g = df_test[df_test['groupe'] == 'FLOP']
+print("\n" + "=" * 60)
+print("RÉSUMÉ GLOBAL")
+print("=" * 60)
+print(f"  Fichiers analysés        : {len(df)}")
+print(f"  Fichiers avec problèmes  : {len(problematic)}")
+print(f"  Points médian/station    : {df['n_points'].median():.0f}")
 
-    for col in cols:
-        metric_name = col.replace(f'{var}_', '')
-        t_vals = top_g[col].dropna()
-        f_vals = flop_g[col].dropna()
-        if len(t_vals) == 0 or len(f_vals) == 0:
-            continue
-        t_moy = t_vals.mean()
-        f_moy = f_vals.mean()
-        delta = t_moy - f_moy
+print("\n── NaN par variable (% médian sur les stations) ──")
+for var in DYNAMIC_VARS:
+    col = f"{var}_pct_nan"
+    if col in df.columns:
+        med = df[col].median()
+        max_ = df[col].max()
+        n_high = (df[col] > 10).sum()
+        print(f"  {var:<25} médiane={med:5.1f}%  max={max_:5.1f}%  stations>10%: {n_high}")
 
-        # Test de Wilcoxon (non-paramétrique)
-        try:
-            _, pval = stats.mannwhitneyu(t_vals, f_vals, alternative='two-sided')
-            sig = "***" if pval < 0.01 else ("**" if pval < 0.05 else ("*" if pval < 0.1 else ""))
-        except Exception:
-            sig = ""
+print("\n── Statistiques water_level ──")
+print(f"  Médiane des moyennes     : {df['water_level_mean'].median():.3f} m")
+print(f"  Médiane des std          : {df['water_level_std'].median():.3f} m")
+print(f"  Max amplitude observée   : {(df['water_level_max'] - df['water_level_min']).max():.2f} m")
 
-        flag = " ◄" if sig in ["*", "**", "***"] else ""
-        print(f"  {metric_name:<20} {t_moy:>10.3f} {f_moy:>11.3f} {delta:>+8.3f}  {sig:>6}{flag}")
+print("\n── Stations problématiques (Strahler-aware) ──")
+if problematic:
+    prob_df = pd.DataFrame(problematic).sort_values("strahler")
+    for _, row in prob_df.iterrows():
+        print(f"  S{row['strahler']}  {row['station']:<30} → {row['flags']}")
+    print(f"\n  Total : {len(problematic)} stations")
+else:
+    print("  Aucune ✅")
 
-# ═══════════════════════════════════════════════════════════════
-# DÉRIVE TRAIN → TEST (distribution shift)
-# ═══════════════════════════════════════════════════════════════
-print("\n\n" + "=" * 80)
-print("DÉRIVE TRAIN→TEST — water_level (distribution shift)")
-print("=" * 80)
-print(f"  {'Groupe':<8} {'moy_train':>10} {'moy_test':>10} {'Δ_mean':>8} "
-      f"{'std_train':>10} {'std_test':>10} {'Δ_std':>8}")
-print(f"  {'-'*68}")
+# ── Figure ───────────────────────────────────────────────────────────────────
+fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+fig.suptitle(f"Diagnostic .nc feat10j — {len(df)} stations | seuils Strahler-aware", fontsize=13)
 
-for groupe, g_train, g_test in [('TOP',  top_train,  top_test),
-                                  ('FLOP', flop_train, flop_test)]:
-    col = 'water_level_mean'
-    if col not in g_train.columns or col not in g_test.columns:
-        continue
-    m_train = g_train[col].mean()
-    m_test  = g_test[col].mean()
-    s_train = g_train['water_level_std'].mean()
-    s_test  = g_test['water_level_std'].mean()
-    print(f"  {groupe:<8} {m_train:>10.3f} {m_test:>10.3f} {m_test-m_train:>+8.3f} "
-          f"{s_train:>10.3f} {s_test:>10.3f} {s_test-s_train:>+8.3f}")
+axes[0, 0].hist(df["water_level_mean"].dropna(), bins=40, color="steelblue", edgecolor="white")
+axes[0, 0].set_title("Distribution moyennes water_level")
+axes[0, 0].set_xlabel("Niveau moyen (m)")
 
-# ═══════════════════════════════════════════════════════════════
-# PLOTS
-# ═══════════════════════════════════════════════════════════════
-print("\nGénération des plots...")
+axes[0, 1].hist(df["water_level_std"].dropna(), bins=40, color="darkorange", edgecolor="white")
+axes[0, 1].set_title("Distribution std water_level")
+axes[0, 1].set_xlabel("Std (m)")
 
-fig, axes = plt.subplots(2, 4, figsize=(18, 8), constrained_layout=True)
-fig.suptitle("Distributions dynamiques — TOP 20 vs FLOP 20 (2024-2025)", fontsize=13)
+amplitude = df["water_level_max"] - df["water_level_min"]
+axes[0, 2].hist(amplitude.dropna(), bins=40, color="green", edgecolor="white")
+axes[0, 2].set_title("Amplitude water_level (max - min)")
+axes[0, 2].set_xlabel("Amplitude (m)")
 
-plot_metrics = [
-    ('water_level_mean',   'WL mean (norm.)'),
-    ('water_level_std',    'WL std (norm.)'),
-    ('water_level_autocorr', 'WL autocorr lag-1'),
-    ('water_level_nan_pct',  'WL NaN %'),
-    ('precipitation_mean', 'Précip. moy. (mm/j)'),
-    ('temperature_mean',   'Temp. moy. (°C)'),
-    ('pet_mean',           'PET moy. (mm/j)'),
-    ('precipitation_std',  'Précip. std'),
-]
+axes[1, 0].hist(df["water_level_pct_nan"].dropna(), bins=40, color="red", edgecolor="white")
+axes[1, 0].set_title("% NaN water_level par station")
+axes[1, 0].set_xlabel("% NaN")
 
-colors = {'TOP': 'steelblue', 'FLOP': 'crimson'}
+axes[1, 1].hist(df["precipitation_J0_mean"].dropna(), bins=40, color="purple", edgecolor="white")
+axes[1, 1].set_title("Précipitations moyennes J0")
+axes[1, 1].set_xlabel("Précip moyenne (mm)")
 
-for ax, (col, label) in zip(axes.flat, plot_metrics):
-    for groupe, gdf in df_test.groupby('groupe'):
-        vals = gdf[col].dropna()
-        if len(vals) == 0:
-            continue
-        ax.hist(vals, bins=12, alpha=0.55, color=colors[groupe],
-                label=f"{groupe} (n={len(vals)})", density=True)
-        ax.axvline(vals.mean(), color=colors[groupe], lw=2, ls='--')
+if "strahler" in df.columns:
+    axes[1, 2].scatter(df["strahler"], amplitude, alpha=0.3, s=8, color="brown")
+    for s, seuil in AMPLITUDE_SEUILS.items():
+        axes[1, 2].plot(s, seuil, "r*", markersize=12)
+    axes[1, 2].set_title("Amplitude vs Strahler (★ = seuil)")
+    axes[1, 2].set_xlabel("Strahler")
+    axes[1, 2].set_ylabel("Amplitude (m)")
 
-    ax.set_title(label, fontsize=9)
-    ax.legend(fontsize=7)
-    ax.grid(True, alpha=0.3)
-
-out_path = Path("./plots_dynamic_analysis.png")
-fig.savefig(out_path, dpi=150, bbox_inches='tight')
-plt.close()
-print(f"  ✅ Plot sauvegardé → {out_path}")
+plt.tight_layout()
+out_fig = "./data/IA/NeuralHydrology_feat10j/diagnostic_nc.png"
+plt.savefig(out_fig, dpi=150)
+print(f"\nFigure sauvegardée : {out_fig}")

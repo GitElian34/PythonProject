@@ -591,3 +591,378 @@ def get_stats(conn):
     cursor.execute('SELECT COUNT(*) FROM measurements')
     nb_measures = cursor.fetchone()[0]
     return nb_stations, nb_measures
+
+
+def creer_table_corine(conn):
+    """Crée la table bv_corine dans hydro_data.db."""
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS bv_corine (
+            corine_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            station_code      TEXT UNIQUE NOT NULL,
+            frac_urban        DECIMAL(5,4),
+            frac_agriculture  DECIMAL(5,4),
+            frac_forest       DECIMAL(5,4),
+            frac_semi_natural DECIMAL(5,4),
+            frac_wetland      DECIMAL(5,4),
+            frac_water        DECIMAL(5,4),
+            nb_pixels         INTEGER,
+            sg_clay_0_30cm    DECIMAL(5,2),
+            sg_sand_0_30cm    DECIMAL(5,2),
+            sg_silt_0_30cm    DECIMAL(5,2),
+            created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (station_code) REFERENCES stations(station_code)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_corine_station ON bv_corine(station_code)')
+    conn.commit()
+    print("✅ Table bv_corine créée")
+
+
+def inserer_corine(conn, station_code, fractions, nb_pixels, soil=None):
+    """Insère ou met à jour les fractions CORINE + texture sols."""
+    soil = soil or {}
+    conn.execute('''
+        INSERT INTO bv_corine (
+            station_code, frac_urban, frac_agriculture, frac_forest,
+            frac_semi_natural, frac_wetland, frac_water, nb_pixels,
+            sg_clay_0_30cm, sg_sand_0_30cm, sg_silt_0_30cm
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(station_code) DO UPDATE SET
+            frac_urban        = excluded.frac_urban,
+            frac_agriculture  = excluded.frac_agriculture,
+            frac_forest       = excluded.frac_forest,
+            frac_semi_natural = excluded.frac_semi_natural,
+            frac_wetland      = excluded.frac_wetland,
+            frac_water        = excluded.frac_water,
+            nb_pixels         = excluded.nb_pixels,
+            sg_clay_0_30cm    = excluded.sg_clay_0_30cm,
+            sg_sand_0_30cm    = excluded.sg_sand_0_30cm,
+            sg_silt_0_30cm    = excluded.sg_silt_0_30cm
+    ''', (
+        station_code,
+        round(fractions['urban'], 4),
+        round(fractions['agriculture'], 4),
+        round(fractions['forest'], 4),
+        round(fractions['semi_natural'], 4),
+        round(fractions['wetland'], 4),
+        round(fractions['water'], 4),
+        nb_pixels,
+        round(soil.get('clay', 0), 2) if soil.get('clay') else None,
+        round(soil.get('sand', 0), 2) if soil.get('sand') else None,
+        round(soil.get('silt', 0), 2) if soil.get('silt') else None,
+    ))
+    conn.commit()
+
+
+def get_corine(conn, station_code):
+    """Récupère les fractions CORINE + sols d'une station."""
+    import pandas as pd
+    df = pd.read_sql_query('''
+        SELECT frac_urban, frac_agriculture, frac_forest,
+               frac_semi_natural, frac_wetland, frac_water,
+               sg_clay_0_30cm, sg_sand_0_30cm, sg_silt_0_30cm
+        FROM bv_corine WHERE station_code = ?
+    ''', conn, params=(station_code,))
+    return df.iloc[0].to_dict() if not df.empty else None
+
+
+# ═══════════════════════════════════════════════════════════════
+# STRAHLER
+# ═══════════════════════════════════════════════════════════════
+
+def ajouter_colonne_strahler(conn):
+    """Ajoute la colonne strahler dans stations si elle n'existe pas."""
+    try:
+        conn.execute("ALTER TABLE stations ADD COLUMN strahler INTEGER")
+        conn.commit()
+        print("✅ Colonne strahler ajoutée dans stations")
+    except Exception:
+        pass  # colonne déjà existante
+
+
+def mettre_a_jour_strahler(conn, updates):
+    """
+    Met à jour l'ordre de Strahler pour une liste de stations.
+    updates : liste de tuples (strahler, station_code)
+    """
+    conn.executemany(
+        "UPDATE stations SET strahler = ? WHERE station_code = ?",
+        updates
+    )
+    conn.commit()
+    print(f"✅ {len(updates)} stations mises à jour avec strahler")
+
+
+# ═══════════════════════════════════════════════════════════════
+# DISTANCE BARRAGES
+# ═══════════════════════════════════════════════════════════════
+
+def ajouter_colonne_dist_barrage(conn):
+    """Ajoute la colonne dist_barrage_m dans stations si elle n'existe pas."""
+    try:
+        conn.execute("ALTER TABLE stations ADD COLUMN dist_barrage_m INTEGER")
+        conn.commit()
+        print("✅ Colonne dist_barrage_m ajoutée dans stations")
+    except Exception:
+        pass  # colonne déjà existante
+
+
+def mettre_a_jour_distances_barrages(conn, roe_conn):
+    """
+    Calcule la distance de chaque station satellite au barrage ROE
+    le plus proche et met à jour dist_barrage_m dans stations.
+    roe_conn : connexion à insitu_data.db qui contient roe_obstacles
+    """
+    import numpy as np
+    import pandas as pd
+
+    df_stations = pd.read_sql(
+        """SELECT station_code,
+                  reference_longitude AS lon,
+                  reference_latitude  AS lat
+           FROM stations
+           WHERE reference_longitude IS NOT NULL""",
+        conn
+    )
+    df_roe = pd.read_sql("SELECT lon, lat FROM roe_obstacles", roe_conn)
+
+    R = 6_371_000.0
+    roe_lat = np.radians(df_roe['lat'].values)
+    roe_lon = np.radians(df_roe['lon'].values)
+
+    updates = []
+    for _, sta in df_stations.iterrows():
+        lat1 = np.radians(sta['lat'])
+        lon1 = np.radians(sta['lon'])
+        dlat = roe_lat - lat1
+        dlon = roe_lon - lon1
+        a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(roe_lat) * np.sin(dlon / 2) ** 2
+        dist = R * 2 * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
+        updates.append((int(dist.min()), sta['station_code']))
+
+    conn.executemany(
+        "UPDATE stations SET dist_barrage_m = ? WHERE station_code = ?",
+        updates
+    )
+    conn.commit()
+    print(f"✅ {len(updates)} stations mises à jour avec dist_barrage_m")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ERA5 QUOTIDIEN SUR BV
+# ═══════════════════════════════════════════════════════════════
+
+def creer_table_era5_bv_jour(conn):
+    """Crée la table era5_bv_jour pour ERA5 moyenné sur le BV."""
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS era5_bv_jour (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            measurement_id INTEGER NOT NULL,
+            station_code   TEXT NOT NULL,
+            mesure_date    DATE NOT NULL,
+            temp_moy_bv    DECIMAL(6,3),
+            precip_sum_bv  DECIMAL(8,3),
+            pet_sum_bv     DECIMAL(8,3),
+            nb_pixels      INTEGER,
+            created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(measurement_id),
+            FOREIGN KEY (measurement_id) REFERENCES measurements(measurement_id),
+            FOREIGN KEY (station_code)   REFERENCES stations(station_code)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_era5_bv_jour_sat ON era5_bv_jour(station_code, mesure_date)')
+    conn.commit()
+    print("✅ Table era5_bv_jour créée")
+
+
+def inserer_era5_bv_jour(conn, measurement_id, station_code, mesure_date,
+                         temp_moy, precip_sum, pet_sum, nb_pixels):
+    """Insère ou met à jour ERA5 quotidien sur BV pour une mesure."""
+    conn.execute('''
+        INSERT INTO era5_bv_jour (
+            measurement_id, station_code, mesure_date,
+            temp_moy_bv, precip_sum_bv, pet_sum_bv, nb_pixels
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(measurement_id) DO UPDATE SET
+            temp_moy_bv   = excluded.temp_moy_bv,
+            precip_sum_bv = excluded.precip_sum_bv,
+            pet_sum_bv    = excluded.pet_sum_bv,
+            nb_pixels     = excluded.nb_pixels
+    ''', (measurement_id, station_code, mesure_date,
+          round(temp_moy, 3) if temp_moy is not None else None,
+          round(precip_sum, 3) if precip_sum is not None else None,
+          round(pet_sum, 3) if pet_sum is not None else None,
+          nb_pixels))
+    conn.commit()
+
+
+def get_era5_bv_jour(conn, station_code):
+    """Récupère ERA5 quotidien sur BV pour une station."""
+    import pandas as pd
+    df = pd.read_sql_query('''
+        SELECT mesure_date AS date, temp_moy_bv, precip_sum_bv, pet_sum_bv
+        FROM era5_bv_jour
+        WHERE station_code = ?
+        ORDER BY mesure_date
+    ''', conn, params=(station_code,))
+    if df.empty:
+        print(f"⚠️  {station_code} — pas de données ERA5-BV-jour")
+        return None
+    return df
+
+def creer_table_era5_j0_j10(conn):
+    """Crée la table era5_j0_j10 — ERA5 de J0 à J-10 pour chaque mesure satellite."""
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS era5_j0_j10 (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            measurement_id INTEGER NOT NULL,
+            station_code   TEXT NOT NULL,
+            measure_date   DATE NOT NULL,
+            j_offset       INTEGER NOT NULL,  -- 0=J0, -1=J-1, ..., -10=J-10
+            temp_moy_bv    DECIMAL(6,3),
+            precip_sum_bv  DECIMAL(8,3),
+            pet_sum_bv     DECIMAL(8,3),
+            nb_pixels      INTEGER,
+            created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(measurement_id, j_offset),
+            FOREIGN KEY (measurement_id) REFERENCES measurements(measurement_id),
+            FOREIGN KEY (station_code)   REFERENCES stations(station_code)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_era5_j0j10_sta ON era5_j0_j10(station_code, measure_date)')
+    conn.commit()
+    print("✅ Table era5_j0_j10 créée")
+
+"""
+Fonctions à ajouter dans db_hydro.py
+═══════════════════════════════════════════════════════════════════════════
+Pour les 222 stations satellite dans hydro_data.db
+═══════════════════════════════════════════════════════════════════════════
+"""
+
+
+def ajouter_colonnes_elevation_slope_satellite(conn):
+    """
+    Ajoute les colonnes elevation_mean, elevation_std, slope_mean, slope_std
+    dans la table stations si elles n'existent pas déjà.
+    """
+    for col in ['elevation_mean', 'elevation_std', 'slope_mean', 'slope_std']:
+        try:
+            conn.execute(f"ALTER TABLE stations ADD COLUMN {col} REAL")
+            print(f"✅ Colonne {col} ajoutée")
+        except Exception:
+            pass  # déjà existante
+    conn.commit()
+
+
+def get_bv_satellite_a_traiter_elevation(conn):
+    """
+    Récupère les stations satellite dont les polygones BV sont disponibles
+    et qui n'ont pas encore d'elevation/slope calculés.
+
+    Returns:
+        list de tuples (station_code, polygone_wkt)
+    """
+    cursor = conn.execute('''
+        SELECT b.station_code, b.polygone_wkt
+        FROM bv_data b
+        JOIN stations s ON b.station_code = s.station_code
+        WHERE b.polygone_wkt IS NOT NULL
+          AND (s.elevation_mean IS NULL OR s.slope_mean IS NULL)
+    ''')
+    return cursor.fetchall()
+
+
+def mettre_a_jour_elevation_slope_satellite(conn, station_code, elev_mean, elev_std, slope_mean, slope_std):
+    """
+    Met à jour elevation et slope pour une station satellite.
+    """
+    conn.execute('''
+        UPDATE stations
+        SET elevation_mean = ?, elevation_std = ?,
+            slope_mean = ?, slope_std = ?
+        WHERE station_code = ?
+    ''', (
+        round(float(elev_mean), 2)  if elev_mean  is not None else None,
+        round(float(elev_std), 2)   if elev_std   is not None else None,
+        round(float(slope_mean), 3) if slope_mean is not None else None,
+        round(float(slope_std), 3)  if slope_std  is not None else None,
+        station_code
+    ))
+
+
+def get_elevation_slope_stats_satellite(conn):
+    """
+    Affiche la distribution d'elevation et slope pour les stations satellite.
+    """
+    import pandas as pd
+    df = pd.read_sql('''
+        SELECT elevation_mean, slope_mean
+        FROM stations
+        WHERE elevation_mean IS NOT NULL
+    ''', conn)
+
+    if df.empty:
+        print("⚠️  Aucune station avec elevation/slope calculés")
+        return df
+
+    print(f"\nElevation (m) : médiane={df['elevation_mean'].median():.0f}, "
+          f"min={df['elevation_mean'].min():.0f}, max={df['elevation_mean'].max():.0f}")
+    print(f"Slope (%)     : médiane={df['slope_mean'].median():.2f}, "
+          f"min={df['slope_mean'].min():.2f}, max={df['slope_mean'].max():.2f}")
+    print(f"Total stations : {len(df)}")
+    return df
+
+
+"""
+Fonctions à ajouter dans db_manager.py (ou db_hydro.py)
+═══════════════════════════════════════════════════════════════════════════
+Pour la table era5_bv_jour : une ligne par jour de la période 2016-2025
+                              avec ERA5 (P/T/PET) agrégé sur le BV satellite.
+═══════════════════════════════════════════════════════════════════════════
+"""
+
+
+def creer_table_era5_bv_jour(conn):
+    """
+    Crée la table era5_bv_jour pour stocker ERA5 quotidien agrégé sur les BV.
+    Une ligne par (station_code, date) — pas lié à une mesure satellite.
+    """
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS era5_bv_jour (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            station_code    TEXT NOT NULL,
+            mesure_date     DATE NOT NULL,
+            temp_moy_bv     DECIMAL(8,3),
+            precip_sum_bv   DECIMAL(8,3),
+            pet_sum_bv      DECIMAL(8,3),
+            nb_pixels       INTEGER,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(station_code, mesure_date),
+            FOREIGN KEY (station_code) REFERENCES stations(station_code)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_era5_bv_jour_sta_date '
+                 'ON era5_bv_jour(station_code, mesure_date)')
+    conn.commit()
+
+
+def get_era5_bv_jour(station_code, db_path="./data/hydro_data.db"):
+    """Récupère la série ERA5 quotidienne pour une station satellite."""
+    import sqlite3
+    import pandas as pd
+
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql('''
+        SELECT mesure_date as date, temp_moy_bv, precip_sum_bv, pet_sum_bv
+        FROM era5_bv_jour
+        WHERE station_code = ?
+        ORDER BY mesure_date
+    ''', conn, params=(station_code,))
+    conn.close()
+
+    if df.empty:
+        print(f"⚠️  {station_code} — pas de données ERA5 quotidiennes")
+        return None
+    df['date'] = pd.to_datetime(df['date'])
+    return df

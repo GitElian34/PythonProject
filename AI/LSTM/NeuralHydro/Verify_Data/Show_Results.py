@@ -7,7 +7,7 @@ import pickle
 import numpy as np
 from pathlib import Path
 
-RUN_DIR = Path("./runs/satellite_water_level_test_1704_160204")
+RUN_DIR = Path("./runs/arlstm_feat10j_modele2_2404_161423")
 
 # ═══════════════════════════════════════════════════════════════
 # MÉTRIQUES DE VALIDATION PAR EPOCH

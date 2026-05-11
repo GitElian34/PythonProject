@@ -466,3 +466,380 @@ def mettre_a_jour_distances_barrages(conn):
     )
     conn.commit()
     print(f"✅ {len(updates)} stations mises à jour avec dist_barrage_m")
+
+
+def ajouter_colonne_strahler(conn):
+    """
+    Ajoute la colonne strahler dans stations_insitu si elle n'existe pas déjà.
+    Le try/except est nécessaire car SQLite ne permet pas de vérifier
+    l'existence d'une colonne avant de l'ajouter.
+    """
+    try:
+        conn.execute("ALTER TABLE stations_insitu ADD COLUMN strahler INTEGER")
+        conn.commit()
+        print("✅ Colonne strahler ajoutée")
+    except Exception:
+        pass  # colonne déjà existante, on continue silencieusement
+
+
+def mettre_a_jour_strahler(conn, updates):
+    """
+    Met à jour l'ordre de Strahler pour une liste de stations.
+
+    Args:
+        conn: Connexion SQLite
+        updates: liste de tuples (strahler, code_sta)
+                 ex: [(7, 'O568501002'), (4, 'O123456789'), ...]
+    """
+    conn.executemany(
+        "UPDATE stations_insitu SET strahler = ? WHERE code_sta = ?",
+        updates
+    )
+    conn.commit()
+    print(f"✅ {len(updates)} stations mises à jour avec strahler")
+
+
+def get_strahler_stats(conn):
+    """
+    Affiche la distribution des ordres de Strahler dans la BDD —
+    utile pour vérifier que les valeurs sont cohérentes.
+    """
+    import pandas as pd
+    df = pd.read_sql("""
+        SELECT strahler, COUNT(*) as nb_stations
+        FROM stations_insitu
+        WHERE strahler IS NOT NULL
+        GROUP BY strahler
+        ORDER BY strahler
+    """, conn)
+    print("\nDistribution Strahler :")
+    print(df.to_string(index=False))
+    return df
+
+"""
+Fonctions à ajouter dans db_insitu.py
+═══════════════════════════════════════════════════════════════════════════
+"""
+
+
+def ajouter_colonnes_elevation_slope(conn):
+    """
+    Ajoute les colonnes elevation_mean, elevation_std, slope_mean, slope_std
+    dans stations_insitu si elles n'existent pas déjà.
+    """
+    for col in ['elevation_mean', 'elevation_std', 'slope_mean', 'slope_std']:
+        try:
+            conn.execute(f"ALTER TABLE stations_insitu ADD COLUMN {col} REAL")
+            print(f"✅ Colonne {col} ajoutée")
+        except Exception:
+            pass  # déjà existante
+    conn.commit()
+
+
+def get_bv_a_traiter_elevation(conn):
+    """
+    Récupère les stations dont les polygones BV sont disponibles
+    et qui n'ont pas encore d'elevation/slope calculés.
+
+    Returns:
+        list de tuples (code_sta, polygone_wkt)
+    """
+    cursor = conn.execute('''
+        SELECT b.code_sta, b.polygone_wkt
+        FROM bv_data b
+        JOIN stations_insitu s ON b.code_sta = s.code_sta
+        WHERE b.polygone_wkt IS NOT NULL
+          AND (s.elevation_mean IS NULL OR s.slope_mean IS NULL)
+    ''')
+    return cursor.fetchall()
+
+
+def mettre_a_jour_elevation_slope(conn, code_sta, elev_mean, elev_std, slope_mean, slope_std):
+    """
+    Met à jour elevation et slope pour une station donnée.
+    """
+    conn.execute('''
+        UPDATE stations_insitu
+        SET elevation_mean = ?, elevation_std = ?,
+            slope_mean = ?, slope_std = ?
+        WHERE code_sta = ?
+    ''', (
+        round(float(elev_mean), 2)  if elev_mean  is not None else None,
+        round(float(elev_std), 2)   if elev_std   is not None else None,
+        round(float(slope_mean), 3) if slope_mean is not None else None,
+        round(float(slope_std), 3)  if slope_std  is not None else None,
+        code_sta
+    ))
+
+
+def get_elevation_slope_stats(conn):
+    """
+    Affiche la distribution d'elevation et slope pour vérification.
+    """
+    import pandas as pd
+    df = pd.read_sql('''
+        SELECT elevation_mean, slope_mean
+        FROM stations_insitu
+        WHERE elevation_mean IS NOT NULL
+    ''', conn)
+
+    if df.empty:
+        print("⚠️  Aucune station avec elevation/slope calculés")
+        return df
+
+    print(f"\nElevation (m) : médiane={df['elevation_mean'].median():.0f}, "
+          f"min={df['elevation_mean'].min():.0f}, max={df['elevation_mean'].max():.0f}")
+    print(f"Slope (%)     : médiane={df['slope_mean'].median():.2f}, "
+          f"min={df['slope_mean'].min():.2f}, max={df['slope_mean'].max():.2f}")
+    print(f"Total stations : {len(df)}")
+    return df
+
+"""
+Fonctions à ajouter dans db_insitu.py
+═══════════════════════════════════════════════════════════════════════════
+Pour la table era5_snow_bv_jour : snow_depth + snowmelt agrégés par BV
+═══════════════════════════════════════════════════════════════════════════
+"""
+
+
+def creer_table_era5_snow_bv_jour(conn):
+    """
+    Crée la table era5_snow_bv_jour pour stocker snow_depth et snowmelt
+    moyennés sur le bassin versant pour chaque mesure insitu.
+    """
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS era5_snow_bv_jour (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            mesure_id       INTEGER NOT NULL,
+            code_sta        TEXT NOT NULL,
+            mesure_date     DATE NOT NULL,
+            snow_depth_bv   DECIMAL(8,4),
+            snowmelt_bv     DECIMAL(8,4),
+            nb_pixels       INTEGER,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(mesure_id),
+            FOREIGN KEY (mesure_id) REFERENCES mesures_insitu(id),
+            FOREIGN KEY (code_sta)  REFERENCES stations_insitu(code_sta)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_snow_bv_sta_date '
+                 'ON era5_snow_bv_jour(code_sta, mesure_date)')
+    conn.commit()
+
+
+def inserer_era5_snow_bv_jour(conn, mesure_id, code_sta, mesure_date,
+                               snow_depth, snowmelt, nb_pixels):
+    """Insère une ligne snow agrégée par BV (avec ON CONFLICT pour update)."""
+    conn.execute('''
+        INSERT INTO era5_snow_bv_jour (
+            mesure_id, code_sta, mesure_date,
+            snow_depth_bv, snowmelt_bv, nb_pixels
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(mesure_id) DO UPDATE SET
+            snow_depth_bv = excluded.snow_depth_bv,
+            snowmelt_bv   = excluded.snowmelt_bv,
+            nb_pixels     = excluded.nb_pixels
+    ''', (mesure_id, code_sta, mesure_date,
+          round(snow_depth, 4) if snow_depth is not None else None,
+          round(snowmelt, 4)   if snowmelt   is not None else None,
+          nb_pixels))
+
+
+def get_era5_snow_bv_jour(code_sta, db_path="./data/insitu_data.db"):
+    """Récupère les données snow par BV pour une station."""
+    import sqlite3
+    import pandas as pd
+
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql('''
+        SELECT mesure_date as date, snow_depth_bv, snowmelt_bv, nb_pixels
+        FROM era5_snow_bv_jour
+        WHERE code_sta = ?
+        ORDER BY mesure_date
+    ''', conn, params=(code_sta,))
+    conn.close()
+
+    if df.empty:
+        print(f"⚠️  {code_sta} — pas de données snow BV")
+        return None
+    df['date'] = pd.to_datetime(df['date'])
+    print(f"✅ {len(df)} lignes snow BV pour {code_sta}")
+    return df
+
+"""
+Fonctions à ajouter dans db_insitu.py
+═══════════════════════════════════════════════════════════════════════════
+Pour flagger les stations avec un problème de capteur (spike, série plate, etc.)
+═══════════════════════════════════════════════════════════════════════════
+"""
+
+
+def ajouter_colonne_flag_capteur(conn):
+    """
+    Ajoute une colonne flag_capteur dans stations_insitu si elle n'existe pas.
+    Stocke la raison du flag (TEXT) ou NULL si pas de problème.
+
+    Valeurs possibles :
+      - 'spike'        : un ou plusieurs pics isolés dans une série plate
+      - 'plat'         : signal quasi-constant
+      - 'hors_periode' : peu de données dans la période d'intérêt
+      - autre raison libre
+    """
+    try:
+        conn.execute("ALTER TABLE stations_insitu ADD COLUMN flag_capteur TEXT")
+        conn.commit()
+        print("✅ Colonne flag_capteur ajoutée")
+    except Exception:
+        pass  # déjà existante
+
+
+def flagger_stations_capteur(conn, codes, raison='spike'):
+    """
+    Flagge une liste de stations avec une raison donnée.
+
+    Args:
+        conn   : connexion SQLite
+        codes  : liste de codes_sta à flagger
+        raison : motif du flag (ex: 'spike', 'plat', 'hors_periode')
+    """
+    updates = [(raison, code) for code in codes]
+    conn.executemany(
+        "UPDATE stations_insitu SET flag_capteur = ? WHERE code_sta = ?",
+        updates
+    )
+    conn.commit()
+    print(f"✅ {len(updates)} stations flaggées avec '{raison}'")
+
+
+def get_stations_non_flaggees(conn):
+    """Retourne la liste des codes_sta sans flag_capteur."""
+    import pandas as pd
+    df = pd.read_sql(
+        "SELECT code_sta FROM stations_insitu WHERE flag_capteur IS NULL",
+        conn
+    )
+    return df['code_sta'].tolist()
+
+
+def get_stations_flaggees(conn):
+    """Retourne le DataFrame des stations flaggées avec leur raison."""
+    import pandas as pd
+    return pd.read_sql(
+        "SELECT code_sta, flag_capteur FROM stations_insitu "
+        "WHERE flag_capteur IS NOT NULL "
+        "ORDER BY flag_capteur, code_sta",
+        conn
+    )
+
+
+def reset_flag_capteur(conn, code_sta=None):
+    """
+    Remet le flag à NULL pour une station ou pour toutes.
+
+    Args:
+        code_sta : code_sta spécifique, ou None pour tout réinitialiser
+    """
+    if code_sta:
+        conn.execute("UPDATE stations_insitu SET flag_capteur = NULL "
+                     "WHERE code_sta = ?", (code_sta,))
+        print(f"✅ Flag retiré pour {code_sta}")
+    else:
+        conn.execute("UPDATE stations_insitu SET flag_capteur = NULL")
+        print(f"✅ Tous les flags retirés")
+    conn.commit()
+
+"""
+Fonctions à ajouter dans db_insitu.py
+═══════════════════════════════════════════════════════════════════════════
+Table climatologie_wl : moyenne et std du water_level normalisé par DOY
+═══════════════════════════════════════════════════════════════════════════
+"""
+
+
+def creer_table_climatologie_wl(conn):
+    """
+    Crée la table climatologie_wl : 365 lignes par station,
+    contenant la moyenne et std interannuelle du water_level normalisé
+    pour chaque jour de l'année (DOY 1-365).
+    """
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS climatologie_wl (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_sta    TEXT NOT NULL,
+            doy         INTEGER NOT NULL,
+            wl_mean     DECIMAL(8,5),
+            wl_std      DECIMAL(8,5),
+            n_years     INTEGER,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(code_sta, doy),
+            FOREIGN KEY (code_sta) REFERENCES stations_insitu(code_sta)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_clim_wl_sta_doy '
+                 'ON climatologie_wl(code_sta, doy)')
+    conn.commit()
+
+
+def inserer_climatologie_wl(conn, code_sta, doy, wl_mean, wl_std, n_years):
+    """Insère ou met à jour une ligne de climatologie pour un DOY donné."""
+    conn.execute('''
+        INSERT INTO climatologie_wl (code_sta, doy, wl_mean, wl_std, n_years)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(code_sta, doy) DO UPDATE SET
+            wl_mean  = excluded.wl_mean,
+            wl_std   = excluded.wl_std,
+            n_years  = excluded.n_years
+    ''', (code_sta, doy,
+          round(wl_mean, 5) if wl_mean is not None else None,
+          round(wl_std, 5)  if wl_std  is not None else None,
+          n_years))
+
+
+def inserer_climatologie_wl_batch(conn, rows):
+    """
+    Insertion batch de la climatologie pour une station.
+
+    Args:
+        rows: liste de tuples (code_sta, doy, wl_mean, wl_std, n_years)
+    """
+    conn.executemany('''
+        INSERT INTO climatologie_wl (code_sta, doy, wl_mean, wl_std, n_years)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(code_sta, doy) DO UPDATE SET
+            wl_mean  = excluded.wl_mean,
+            wl_std   = excluded.wl_std,
+            n_years  = excluded.n_years
+    ''', rows)
+    conn.commit()
+
+
+def get_climatologie_wl(conn, code_sta):
+    """
+    Récupère la climatologie (365 lignes) pour une station.
+
+    Returns:
+        DataFrame avec colonnes [doy, wl_mean, wl_std, n_years] ou None
+    """
+    import pandas as pd
+    df = pd.read_sql_query('''
+        SELECT doy, wl_mean, wl_std, n_years
+        FROM climatologie_wl
+        WHERE code_sta = ?
+        ORDER BY doy
+    ''', conn, params=(code_sta,))
+    if df.empty:
+        return None
+    return df
+
+
+def supprimer_climatologie_wl(conn, code_sta=None):
+    """
+    Supprime la climatologie d'une station ou de toutes.
+    """
+    if code_sta:
+        conn.execute("DELETE FROM climatologie_wl WHERE code_sta = ?", (code_sta,))
+        print(f"✅ Climatologie supprimée pour {code_sta}")
+    else:
+        conn.execute("DELETE FROM climatologie_wl")
+        print("✅ Toute la table climatologie_wl vidée")
+    conn.commit()

@@ -1,181 +1,106 @@
 """
-Plots obs vs sim pour les 3 meilleures et 3 pires stations (epoch 15)
-- OBS  : lues depuis ./data/IA/NeuralHydrology/time_series/{station}.nc
-- SIM  : lues depuis le fichier .p du run (résultats NeuralHydrology)
+Carte HTML interactive des 20 MEILLEURES et 20 PIRES stations
+Utilise folium pour générer une carte cliquable avec popups.
 """
 
-import torch
-import pickle
-import numpy as np
-import xarray as xr
-import matplotlib.pyplot as plt
+import pandas as pd
 from pathlib import Path
-
-torch.set_num_threads(8)
+import folium
 
 # ═══════════════════════════════════════════════════════════════
 # PARAMÈTRES
 # ═══════════════════════════════════════════════════════════════
-RUN_DIR    = Path("./runs/satellite_water_level_test_1604_114015")
-NC_DIR     = Path("./data/IA/NeuralHydrology/time_series")
-PLOT_EPOCH = 15
-TEST_START = "2024-01-01"
-TEST_END   = "2025-12-31"
+CSV_PATH   = Path("./runs/arlstm_feat10j_modele2_2704_112827/test/model_epoch005/test_metrics.csv")
+ATTRS_PATH = Path("./data/IA/NeuralHydrology_feat10j/attributes/attributes.csv")
+OUT_HTML   = Path("./data/IA/NeuralHydrology/Visualisation/carte_stations.html")
 
-WORST_STATIONS = [
-    ("Y921000203", -21.731),
-    ("Y046600501", -10.143),
-    ("U141541001",  -1.203),
-]
-BEST_STATIONS = [
-    ("J341303001",  0.791),
-    ("O710151001",  0.771),
-    ("O301101001",  0.764),
-]
+N_TOP = 20
 
 # ═══════════════════════════════════════════════════════════════
-# CHARGEMENT RÉSULTATS (pour NSE/KGE et sim)
+# CHARGEMENT + AGRÉGATION
 # ═══════════════════════════════════════════════════════════════
-candidates = list((RUN_DIR / "test").glob(f"*epoch{PLOT_EPOCH:03d}*/*.p"))
-if not candidates:
-    raise FileNotFoundError(f"Aucun résultat .p trouvé pour epoch {PLOT_EPOCH}")
+df_scores = pd.read_csv(CSV_PATH, header=None, names=["station_d", "NSE", "KGE"])
+df_scores["NSE"] = pd.to_numeric(df_scores["NSE"], errors="coerce")
+df_scores["KGE"] = pd.to_numeric(df_scores["KGE"], errors="coerce")
+df_scores = df_scores.dropna(subset=["NSE", "KGE"])
+df_scores["station"] = df_scores["station_d"].str.replace(r"_d\d+$", "", regex=True)
 
-with open(sorted(candidates)[-1], "rb") as f:
-    results = pickle.load(f)
+df_agg = df_scores.groupby("station").agg(
+    NSE_mean=("NSE", "mean"),
+    KGE_mean=("KGE", "mean"),
+).reset_index()
 
-print(f"✅ Résultats epoch {PLOT_EPOCH} chargés — {len(results)} stations")
+attrs = pd.read_csv(ATTRS_PATH)
+attrs["station"] = attrs["station_id"].str.replace(r"_d\d+$", "", regex=True)
+attrs = attrs.drop_duplicates(subset=["station"])
 
-# Debug structure xr sur la première station disponible
-first = list(results.keys())[0]
-xr_ex = results[first]['1D']['xr']
-print(f"\nStructure xr (station {first}) :")
-print(f"  type   : {type(xr_ex)}")
-print(f"  dims   : {dict(xr_ex.dims)}")
-print(f"  coords : {list(xr_ex.coords)}")
-if hasattr(xr_ex, 'data_vars'):
-    print(f"  data_vars : {list(xr_ex.data_vars)}")
-else:
-    for c in xr_ex.coords:
-        try: print(f"  coord '{c}' values : {xr_ex.coords[c].values[:5]}")
-        except: pass
-
-# ═══════════════════════════════════════════════════════════════
-# HELPER — extraction sim depuis le pickle
-# ═══════════════════════════════════════════════════════════════
-def extract_sim(xr_data):
-    """Extrait sim et times depuis xarray NeuralHydrology."""
-    if hasattr(xr_data, 'data_vars'):
-        sim_key = next((k for k in xr_data.data_vars if 'sim' in k), list(xr_data.data_vars)[0])
-        sim     = xr_data[sim_key].values.flatten()
-        times   = xr_data.coords[list(xr_data.dims)[0]].values
-        return sim, times
-
-    if 'variable' in xr_data.dims:
-        var_names = xr_data.coords['variable'].values
-        sim_vars  = [v for v in var_names if 'sim' in str(v)]
-        key       = sim_vars[0] if sim_vars else var_names[0]
-        sim       = xr_data.sel(variable=key).values.flatten()
-        dim0      = [d for d in xr_data.dims if d != 'variable'][0]
-        times     = xr_data.coords[dim0].values
-        return sim, times
-
-    # Fallback : aplatir
-    vals  = xr_data.values.flatten()
-    times = xr_data.coords[list(xr_data.dims)[0]].values
-    return vals, times
-
-# ═══════════════════════════════════════════════════════════════
-# PLOT
-# ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(6, 1, figsize=(14, 18), constrained_layout=True)
-fig.suptitle(
-    f"Obs vs Sim — Epoch {PLOT_EPOCH} | {TEST_START} → {TEST_END}",
-    fontsize=13, fontweight='bold'
+df = df_agg.merge(
+    attrs[["station", "lon", "lat", "aire_km2", "elevation_mean", "slope_mean", "strahler"]],
+    on="station", how="left"
 )
+df = df.dropna(subset=["lon", "lat"])
 
-plot_groups = [
-    ("3 MEILLEURES", BEST_STATIONS,  "steelblue"),
-    ("3 PIRES",      WORST_STATIONS, "crimson"),
-]
+# ═══════════════════════════════════════════════════════════════
+# SÉLECTION TOP/BOTTOM
+# ═══════════════════════════════════════════════════════════════
+top_stations    = df.nlargest(N_TOP, "NSE_mean").copy()
+bottom_stations = df.nsmallest(N_TOP, "NSE_mean").copy()
+top_stations["categorie"]    = "TOP"
+bottom_stations["categorie"] = "BOTTOM"
 
-ax_idx = 0
-for group_label, stations_list, color in plot_groups:
-    for rank, (station, nse_ref) in enumerate(stations_list):
-        ax = axes[ax_idx]
+print(f"TOP {N_TOP} : NSE de {top_stations['NSE_mean'].min():.3f} à {top_stations['NSE_mean'].max():.3f}")
+print(f"BOTTOM {N_TOP} : NSE de {bottom_stations['NSE_mean'].min():.3f} à {bottom_stations['NSE_mean'].max():.3f}")
 
-        # ── OBS depuis le .nc ──────────────────────────────────
-        nc_path = NC_DIR / f"{station}.nc"
-        if not nc_path.exists():
-            ax.set_title(f"{station} — fichier .nc introuvable : {nc_path}")
-            ax_idx += 1
-            continue
+# ═══════════════════════════════════════════════════════════════
+# CRÉATION DE LA CARTE
+# ═══════════════════════════════════════════════════════════════
+m = folium.Map(location=[46.5, 2.5], zoom_start=6, tiles="OpenStreetMap")
 
-        try:
-            ds      = xr.open_dataset(nc_path)
-            ds_test = ds.sel(date=slice(TEST_START, TEST_END))
-            obs     = ds_test["water_level"].values.flatten()
-            t_obs   = ds_test.coords["date"].values
-            ds.close()
-        except Exception as e:
-            ax.set_title(f"{station} — erreur lecture .nc : {e}")
-            ax_idx += 1
-            continue
+fg_top    = folium.FeatureGroup(name=f"TOP {N_TOP} (vert)", show=True)
+fg_bottom = folium.FeatureGroup(name=f"BOTTOM {N_TOP} (rouge)", show=True)
 
-        # ── SIM + métriques depuis le pickle ──────────────────
-        nse, kge = np.nan, np.nan
-        sim, t_sim = None, None
+for df_grp, group, color in [(top_stations, fg_top, "green"),
+                              (bottom_stations, fg_bottom, "red")]:
+    for _, row in df_grp.iterrows():
+        popup_html = f"""
+        <b>{row['station']}</b><br>
+        <b>NSE moyen : {row['NSE_mean']:.3f}</b><br>
+        KGE moyen : {row['KGE_mean']:.3f}<br>
+        <hr style='margin:3px'>
+        Aire : {row['aire_km2']:.0f} km²<br>
+        Strahler : {int(row['strahler']) if pd.notna(row['strahler']) else 'N/A'}<br>
+        Elevation : {row['elevation_mean']:.0f} m<br>
+        Slope : {row['slope_mean']:.2f} %
+        """
+        folium.CircleMarker(
+            location=[row["lat"], row["lon"]],
+            radius=8,
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.75,
+            weight=2,
+            popup=folium.Popup(popup_html, max_width=250),
+            tooltip=f"{row['station']} — NSE {row['NSE_mean']:.2f}",
+        ).add_to(group)
 
-        if station in results:
-            try:
-                nse     = results[station]['1D']['NSE']
-                kge     = results[station]['1D']['KGE']
-                xr_data = results[station]['1D']['xr']
-                sim, t_sim = extract_sim(xr_data)
-            except Exception as e:
-                print(f"  ⚠️  {station} — erreur extraction sim : {e}")
+fg_top.add_to(m)
+fg_bottom.add_to(m)
+folium.LayerControl(collapsed=False).add_to(m)
 
-        # ── Alignement temporel obs/sim ────────────────────────
-        import pandas as pd
-        df_obs = pd.Series(obs, index=pd.to_datetime(t_obs), name='obs')
+# Légende
+legend_html = f"""
+<div style='position: fixed; bottom: 20px; left: 20px; background: white;
+            padding: 10px; border: 1px solid #999; border-radius: 5px;
+            font-size: 13px; z-index: 9999;'>
+  <b>Performances du modèle</b><br>
+  <span style='color:green; font-size: 18px'>●</span> TOP {N_TOP} (NSE moyen le + haut)<br>
+  <span style='color:red; font-size: 18px'>●</span> BOTTOM {N_TOP} (NSE moyen le + bas)
+</div>
+"""
+m.get_root().html.add_child(folium.Element(legend_html))
 
-        if sim is not None and t_sim is not None:
-            df_sim = pd.Series(sim, index=pd.to_datetime(t_sim), name='sim')
-            df     = pd.concat([df_obs, df_sim], axis=1).dropna()
-            t_plot   = df.index
-            obs_plot = df['obs'].values
-            sim_plot = df['sim'].values
-        else:
-            t_plot   = df_obs.dropna().index
-            obs_plot = df_obs.dropna().values
-            sim_plot = np.full_like(obs_plot, np.nan)
-
-        if len(obs_plot) == 0:
-            ax.set_title(f"{station} — aucune donnée sur la période test")
-            ax_idx += 1
-            continue
-
-        obs_std = np.std(obs_plot)
-        sim_std = np.nanstd(sim_plot)
-        bias    = np.nanmean(sim_plot - obs_plot)
-
-        ax.plot(t_plot, obs_plot, color='black', lw=1.5, label='Observé',  zorder=3)
-        if not np.all(np.isnan(sim_plot)):
-            ax.plot(t_plot, sim_plot, color=color, lw=1.5, label='Simulé', alpha=0.85, zorder=2)
-            ax.fill_between(t_plot, obs_plot, sim_plot, alpha=0.12, color=color)
-
-        ax.set_title(
-            f"[{group_label} #{rank+1}]  {station}   "
-            f"NSE={nse:.3f}  KGE={kge:.3f}  "
-            f"| obs_std={obs_std:.3f}  sim_std={sim_std:.3f}  biais={bias:+.3f}",
-            fontsize=9, loc='left'
-        )
-        ax.set_ylabel("water_level (norm.)", fontsize=8)
-        ax.legend(fontsize=8, loc='upper right')
-        ax.grid(True, alpha=0.3)
-
-        ax_idx += 1
-
-out_path = Path("./plots_best_worst.png")
-fig.savefig(out_path, dpi=150, bbox_inches='tight')
-plt.close()
-print(f"\n✅ Plot sauvegardé → {out_path}")
+# Sauvegarde
+OUT_HTML.parent.mkdir(parents=True, exist_ok=True)
+m.save(str(OUT_HTML))
+print(f"\n✅ Carte sauvegardée : {OUT_HTML}")

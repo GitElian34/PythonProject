@@ -1,24 +1,23 @@
 # ═══════════════════════════════════════════════
 # EXPERIMENT
 # ═══════════════════════════════════════════════
-experiment_name: satellite_water_level_test
+experiment_name: arlstm_Alti_modele2
 
 # ═══════════════════════════════════════════════
 # DATASET
 # ═══════════════════════════════════════════════
 dataset: generic
-data_dir: ./data/IA/NeuralHydrology
+data_dir: ./data/IA/NeuralHydrology_satellite/
+train_basin_file: ./AI/LSTM/NeuralHydro_satellite/train_basins.txt
+validation_basin_file: ./AI/LSTM/NeuralHydro_satellite/train_basins.txt
+test_basin_file: ./AI/LSTM/NeuralHydro_satellite/val_basins.txt
 
-# Fichiers listant les stations (un id par ligne)
-train_basin_file: ./AI/LSTM/NeuralHydro/train_basins.txt
-validation_basin_file: ./AI/LSTM/NeuralHydro/train_basins.txt
-test_basin_file: ./AI/LSTM/NeuralHydro/val_basins.txt
-# ═══════════════════════════════════════════════>>
+# ═══════════════════════════════════════════════
 # PÉRIODES
 # ═══════════════════════════════════════════════
 train_start_date: "01/01/2016"
 train_end_date: "31/12/2023"
-validation_start_date: "01/01/2024"
+validation_start_date: "09/01/2024"
 validation_end_date: "31/12/2025"
 
 # ═══════════════════════════════════════════════
@@ -26,17 +25,32 @@ validation_end_date: "31/12/2025"
 # ═══════════════════════════════════════════════
 target_variables:
   - water_level
+
+# lag-1 dans ce dataset = 10 jours réels (1 point tous les 10j)
 lagged_features:
   water_level:
-    - 27             # génère water_level_shift1
-
+    - 1    # lag-10j réels
+#    - 2    # lag-20j réels
+#    - 3    # lag-30j réels
 autoregressive_inputs:
-  - water_level_shift27
+  - water_level_shift1
 
+
+# Modèle 2 — J0 + moyennes J3 + moyennes J10
 dynamic_inputs:
-  - precipitation
-  - temperature
-  - pet
+  - precipitation_J0
+  - temperature_J0
+  - pet_J0
+  - precip_mean_J3
+  - pet_mean_J3
+  - temp_mean_J3
+  - precip_mean_J10
+  - pet_mean_J10
+  - temp_mean_J10
+  - clim_mean_20j
+  - clim_std_20j
+#  - water_level_shift2  # ← manque
+#  - water_level_shift3
 
 static_attributes:
   - aire_km2
@@ -49,51 +63,43 @@ static_attributes:
   - sg_sand_0_30cm
   - sg_silt_0_30cm
   - strahler
+  - elevation_mean
+  - slope_mean
+
 
 # ═══════════════════════════════════════════════
-# PRE-TRAITEMENT
-# ═══════════════════════════════════════════════
-#statics_embedding:
-#  type: fc
-#  hiddens: [20, 10]
-#  activation: tanh
-#
-#
-#dynamics_embedding:
-#  type: fc
-#  hiddens: [16, 8]
-#  activation: tanh
-## ═══════════════════════════════════════════════
 # ARCHITECTURE
 # ═══════════════════════════════════════════════
-model: ealstm
-
+model: arlstm
 head: regression
-hidden_size: 256
-seq_length: 365
+hidden_size: 128
+seq_length: 36
 predict_last_n: 1
 
 # ═══════════════════════════════════════════════
 # ENTRAÎNEMENT
 # ═══════════════════════════════════════════════
-epochs: 30
+
 batch_size: 256
-output_dropout: 0.4
+output_dropout: 0.3
 optimizer: AdamW
 learning_rate:
-  0: 0.001
-  20: 0.0001
+  0: 0.0003              # réduire AVANT la dégradation
+  10: 0.0001
+epochs: 15
 
 loss: NSE
 
 initial_forget_bias: 3
 save_validation_results: True
-max_updates_per_epoch: 2000
+# Moins de updates car séries plus courtes (36 pts/an vs 365)
+max_updates_per_epoch: 4000
+
 # ═══════════════════════════════════════════════
 # VALIDATION
 # ═══════════════════════════════════════════════
-validate_every: 5
-validate_n_random_basins: 200
+validate_every: 2
+validate_n_random_basins: 800
 metrics:
   - NSE
   - KGE
@@ -101,4 +107,4 @@ metrics:
 # ═══════════════════════════════════════════════
 # DEVICE
 # ═══════════════════════════════════════════════
-device: cpu   # remplacez par cuda:0 si vous avez un GPU
+device: cpu

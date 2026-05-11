@@ -4,8 +4,8 @@ import xarray as xr
 
 # Chemin du fichier
 
-def unzip(zip_path,mois, year):
-    extract_dir = '/home/sar_hydro/STUDIES/EtudesEB/PythonProject/data/ERA5/usable_data_LAND_France/'+ year+'/'+mois
+def unzip(zip_path,mois, year,extract_dir = None):
+    #extract_dir = '/home/sar_hydro/STUDIES/EtudesEB/PythonProject/data/ERA5/usable_data_LAND_France/'+ year+'/'+mois
     # Créer le dossier s'il n'existe pas
     os.makedirs(extract_dir, exist_ok=True)
     # Vérifier si c'est un zip
