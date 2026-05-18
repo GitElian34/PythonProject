@@ -1,13 +1,13 @@
 # ═══════════════════════════════════════════════
 # EXPERIMENT
 # ═══════════════════════════════════════════════
-experiment_name: arlstm_feat27jLow_modele2
+experiment_name: arlstm_feat27jHigh_modele2
 # ═══════════════════════════════════════════════
 # DATASET
 # ═══════════════════════════════════════════════
 dataset: generic
 data_dir: ./data/IA/NeuralHydrology_feat27j
-train_basin_file: ./AI/LSTM/NeuralHydro_feat27j_low/train_basins.txt
+train_basin_file: ./AI/LSTM/NeuralHydro_feat27j_high/train_basins.txt
 validation_basin_file: ./AI/LSTM/NeuralHydro_satellite_27D/stations_27j.txt
 test_basin_file: ./AI/LSTM/NeuralHydro_feat27j_low/val_basins.txt
 
@@ -45,6 +45,7 @@ dynamic_inputs:
   - precip_mean_J3
   - pet_mean_J3
   - temp_mean_J3
+  - precip_mean_J27
   - precip_mean_J10
 #  - pet_mean_J10
   - temp_mean_J10
@@ -58,6 +59,10 @@ dynamic_inputs:
 #  - clim_std
   - clim_mean_20j
   - clim_std_20j
+  - precip_max_J27
+  - precip_last7
+#  - nb_jours_pluie_J27
+#  - precip_mean_J14
 #  - doy_sin
 #  - doy_cos
 #  - water_level_shift2  # ← manque
@@ -83,9 +88,9 @@ static_attributes:
 # ═══════════════════════════════════════════════
 model: arlstm
 head: regression
-hidden_size: 400
+hidden_size: 256
 seq_length:
-  27D: 13
+  27D: 20
 predict_last_n:
   27D: 1
 
@@ -99,17 +104,19 @@ clip_gradient_norm: 1
 target_noise_std: 0.01
 optimizer: AdamW
 learning_rate:
-  0: 0.001
-  12 : 0.0003
+  0: 0.0004
+  6: 0.0003
+  12: 0.0001
+  20: 0.00005
 
-epochs: 20
+epochs: 30
 
 loss: NSE
 
-initial_forget_bias: 2
+initial_forget_bias: 3
 save_validation_results: True
 # Moins de updates car séries plus courtes (36 pts/an vs 365)
-max_updates_per_epoch: 2000
+max_updates_per_epoch: 4000
 
 # ═══════════════════════════════════════════════
 # VALIDATION

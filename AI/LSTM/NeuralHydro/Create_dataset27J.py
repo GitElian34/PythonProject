@@ -228,6 +228,12 @@ for i, (_, row) in enumerate(candidats.iterrows()):
     df['snow_depth_mean_J27'] = df['snow_depth'].rolling(27,    min_periods=1).mean()
     df['snowmelt_mean_J27']   = df['snowmelt'].rolling(27,      min_periods=1).mean()
 
+    # ── Caractérisation fine des précipitations ─────────────────────────
+    df['precip_max_J27']     = df['precipitation'].rolling(27, min_periods=1).max()
+    df['precip_last7']       = df['precipitation'].rolling(7,  min_periods=1).mean()
+    df['nb_jours_pluie_J27'] = (df['precipitation'] > 1.0).astype(float).rolling(27, min_periods=1).sum()
+    df['precip_mean_J14']    = df['precipitation'].rolling(14, min_periods=1).mean()
+
     # ── Climatologie + encodage cyclique DOY ────────────────────────────────
     doy = np.clip(df.index.dayofyear, a_min=1, a_max=365)
 
@@ -263,6 +269,8 @@ for i, (_, row) in enumerate(candidats.iterrows()):
         'precip_mean_J3',   'temp_mean_J3',   'pet_mean_J3',
         'precip_mean_J10',  'temp_mean_J10',  'pet_mean_J10',
         'precip_mean_J27',  'temp_mean_J27',  'pet_mean_J27',
+        # Caractérisation fine précipitations
+        'precip_max_J27', 'precip_last7', 'nb_jours_pluie_J27', 'precip_mean_J14',
         # Neige
         'snow_depth_J0',        'snowmelt_J0',
         'snow_depth_mean_J3',   'snowmelt_mean_J3',
@@ -297,7 +305,12 @@ for i, (_, row) in enumerate(candidats.iterrows()):
             col: xr.Variable("date", df_sat[col].values.astype(np.float32))
             for col in cols_out
         }
-        ds = xr.Dataset(data_vars, coords={"date": df_sat.index.values})
+        # Shift des dates : aligner tous les décalages sur 2016-01-01
+        shifted_dates = df_sat.index.values
+        if decalage > 0:
+            shifted_dates = pd.to_datetime(shifted_dates) - pd.Timedelta(days=decalage)
+            shifted_dates = shifted_dates.values
+        ds = xr.Dataset(data_vars, coords={"date": shifted_dates})
         ds.to_netcdf(nc_path, engine="scipy", format="NETCDF3_CLASSIC")
         stations_exportees.append(station_id)
 
@@ -401,34 +414,39 @@ print(f"""
      - precip_mean_J3
      - temp_mean_J3
      - pet_mean_J3
+     - precip_mean_J10
+     - temp_mean_J10
+     - pet_mean_J10
      - precip_mean_J27
      - temp_mean_J27
      - pet_mean_J27
+     # Nouvelles variables précip
+     - precip_max_J27
+     - precip_last7
+     - nb_jours_pluie_J27
+     - precip_mean_J14
+     # Neige
      - snow_depth_J0
      - snowmelt_J0
      - snow_depth_mean_J3
      - snowmelt_mean_J3
+     - snow_depth_mean_J10
+     - snowmelt_mean_J10
      - snow_depth_mean_J27
      - snowmelt_mean_J27
+     # Climatologie
      - clim_mean
      - clim_std
      - clim_mean_20j
      - clim_std_20j
+     # DOY
      - doy_sin
      - doy_cos
 
    seq_length:
-     27D: 13    # 13 pas × 27j = 351j ≈ 1 an (comparable au 36 × 10j = 360j)
+     27D: 20
 
-   lagged_features:
-     water_level:
-       - 1      # lag-1 = 27j réels
-
-   target_variables:
-     - water_level
-
-   data_dir: ./data/IA/NeuralHydrology_feat27j
-   train_basin_file: ./AI/LSTM/NeuralHydro_feat27j/train_basins.txt
+   ⚠️  Shift des dates intégré : tous les _dX commencent au 2016-01-01
 """)
 
 conn.close()

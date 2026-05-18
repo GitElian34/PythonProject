@@ -1,9 +1,10 @@
 """
-select_500_stations_27j.py
+select_stations_27j_high.py
 ═══════════════════════════════════════════════════════════════════════════
-Sélectionne 500 stations au hasard (non flaggées, gap <= 60j, dist_barrage >= 500m)
-et réécrit train_basins.txt et val_basins.txt dans NeuralHydro_feat27j_low/.
-Usage : python select_500_stations_27j.py
+Sélectionne les stations avec elevation_mean > 500m pour entraîner un
+modèle spécialisé montagne.
+
+Usage : python select_stations_27j_high.py
 ═══════════════════════════════════════════════════════════════════════════
 """
 import sqlite3
@@ -11,47 +12,57 @@ import random
 from pathlib import Path
 
 DB_PATH    = "./data/insitu_data.db"
-BASINS_DIR = Path("./AI/LSTM/NeuralHydro_feat27j_low/")
-N_STATIONS = 500
+BASINS_DIR = Path("./AI/LSTM/NeuralHydro_feat27j_high/")
+ELEV_MIN   = 1    # seuil altitude en mètres
 SEED       = 42
-FREQ       = 27  # décalages _d0..._d26
+FREQ       = 27
 
 random.seed(SEED)
 
 # ═══════════════════════════════════════════════════════════════
-# 1. Récupérer les stations éligibles depuis la BDD
+# 1. Récupérer les stations éligibles avec altitude > 500m
 # ═══════════════════════════════════════════════════════════════
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.execute("""
-    SELECT s.code_sta
+    SELECT s.code_sta, s.elevation_mean
     FROM stations_insitu s
     WHERE s.flag_capteur IS NULL
-      AND (s.gap_max_jours IS NULL OR s.gap_max_jours <= 60)
+      AND (s.gap_max_jours IS NULL OR s.gap_max_jours <= 200)
       AND (s.dist_barrage_m IS NULL OR s.dist_barrage_m >= 500)
       AND s.lon IS NOT NULL
       AND s.lat IS NOT NULL
-""")
-eligible = [row[0] for row in cursor.fetchall()]
+      AND s.elevation_mean IS NOT NULL
+      AND s.elevation_mean >= ?
+""", (ELEV_MIN,))
+results = cursor.fetchall()
 conn.close()
-print(f"Stations éligibles : {len(eligible)}")
 
-# Vérifier que les .nc existent (dossier 27j)
+eligible = [row[0] for row in results]
+elevations = {row[0]: row[1] for row in results}
+print(f"Stations éligibles (elev >= {ELEV_MIN}m) : {len(eligible)}")
+
+# Vérifier que les .nc existent
 ts_dir = Path("./data/IA/NeuralHydrology_feat27j/time_series/")
 eligible = [s for s in eligible if (ts_dir / f"{s}_d0.nc").exists()]
 print(f"Avec .nc disponible : {len(eligible)}")
 
+if len(eligible) == 0:
+    print("❌ Aucune station trouvée !")
+    exit(1)
+
+# Stats
+elevs = [elevations[s] for s in eligible if s in elevations]
+print(f"Elevation : min={min(elevs):.0f}m, max={max(elevs):.0f}m, médiane={sorted(elevs)[len(elevs)//2]:.0f}m")
+
 # ═══════════════════════════════════════════════════════════════
-# 2. Tirer 500 au hasard, split 80/20
+# 2. Split 80/20
 # ═══════════════════════════════════════════════════════════════
 random.shuffle(eligible)
-selected = eligible[:N_STATIONS]
+n_val   = max(1, int(len(eligible) * 0.2))
+n_train = len(eligible) - n_val
+train_bases = eligible[:n_train]
+val_bases   = eligible[n_train:]
 
-n_val   = int(len(selected) * 0.2)
-n_train = len(selected) - n_val
-train_bases = selected[:n_train]
-val_bases   = selected[n_train:]
-
-# Générer les IDs avec décalages
 train_ids = [f"{s}_d{d}" for s in train_bases for d in range(FREQ)]
 val_ids   = [f"{s}_d{d}" for s in val_bases   for d in range(FREQ)]
 

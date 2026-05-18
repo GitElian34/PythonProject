@@ -250,6 +250,34 @@ for i, code_sta in enumerate(stations_27j):
     df_grid['precip_mean_J27'] = precip_J27
     df_grid['temp_mean_J27']   = temp_J27
 
+    # ── Caractérisation fine des précipitations depuis le quotidien ────
+    precip_max_J27     = np.full(len(grid_27D), np.nan)
+    precip_last7       = np.full(len(grid_27D), np.nan)
+    nb_jours_pluie_J27 = np.full(len(grid_27D), np.nan)
+    precip_mean_J14    = np.full(len(grid_27D), np.nan)
+
+    for j, dt in enumerate(grid_27D):
+        start_27 = dt - pd.Timedelta(days=26)
+        sub_27 = df_era5.loc[start_27:dt]['precip_sum_bv']
+        if len(sub_27) >= 1:
+            precip_max_J27[j]     = sub_27.max()
+            nb_jours_pluie_J27[j] = (sub_27 > 1.0).sum()
+
+        start_7 = dt - pd.Timedelta(days=6)
+        sub_7 = df_era5.loc[start_7:dt]['precip_sum_bv']
+        if len(sub_7) >= 1:
+            precip_last7[j] = sub_7.mean()
+
+        start_14 = dt - pd.Timedelta(days=13)
+        sub_14 = df_era5.loc[start_14:dt]['precip_sum_bv']
+        if len(sub_14) >= 1:
+            precip_mean_J14[j] = sub_14.mean()
+
+    df_grid['precip_max_J27']     = precip_max_J27
+    df_grid['precip_last7']       = precip_last7
+    df_grid['nb_jours_pluie_J27'] = nb_jours_pluie_J27
+    df_grid['precip_mean_J14']    = precip_mean_J14
+
     # ── 6. Snap mesures satellite ──────────────────────────────────────
     water_level = np.full(len(grid_27D), np.nan)
     for j, dt_grid in enumerate(grid_27D):
@@ -285,6 +313,8 @@ for i, code_sta in enumerate(stations_27j):
         'precip_mean_J3',   'pet_mean_J3',    'temp_mean_J3',
         'precip_mean_J10',  'pet_mean_J10',   'temp_mean_J10',
         'precip_mean_J27',  'temp_mean_J27',
+        # Caractérisation fine précipitations
+        'precip_max_J27', 'precip_last7', 'nb_jours_pluie_J27', 'precip_mean_J14',
         'snow_depth_J0',    'snowmelt_J0',
         'clim_mean_20j',    'clim_std_20j',
         'doy_sin',          'doy_cos',

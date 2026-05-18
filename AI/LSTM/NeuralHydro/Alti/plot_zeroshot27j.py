@@ -1,13 +1,13 @@
 """
-plot_zeroshot_predictions.py
+plot_zeroshot_predictions_27j.py
 ═══════════════════════════════════════════════════════════════════════════
-Affiche pour chaque station satellite ~10j :
+Affiche pour chaque station satellite ~27j :
   - Les précipitations (barres inversées, style hyétogramme)
   - La série observée (water_level normalisée)
   - La série prédite par le modèle insitu en zero-shot
   - Les métriques NSE et KGE
 
-Lit les test_results.p + les .nc pour les précipitations.
+Lit les validation_results.p + les .nc pour les précipitations.
 ═══════════════════════════════════════════════════════════════════════════
 """
 
@@ -22,16 +22,16 @@ from pathlib import Path
 # ═══════════════════════════════════════════════════════════════
 # PARAMÈTRES
 # ═══════════════════════════════════════════════════════════════
-MODEL = "/arlstm_feat10jLow_modele2_0605_140952"
-RUN_DIR     = Path(f"./runs{MODEL}")
-EPOCH       = 18
-PERIOD      = "test"
-NC_DIR      = Path("./data/IA/NeuralHydrology_satellite_10D/time_series")
+MODEL = "arlstm_feat27jHigh_modele2_1205_153310"
+RUN_DIR     = Path(f"./runs/{MODEL}")
+EPOCH       = 9
+PERIOD      = "validation"
+NC_DIR      = Path("./data/IA/NeuralHydrology_satellite_27D/time_series")
 
 RESULTS_P   = RUN_DIR / PERIOD / f"model_epoch{EPOCH:03d}" / f"{PERIOD}_results.p"
 METRICS_CSV = RUN_DIR / PERIOD / f"model_epoch{EPOCH:03d}" / f"{PERIOD}_metrics.csv"
 
-OUT_DIR     = Path(f"./figures_zeroshot_satellite{MODEL}")
+OUT_DIR     = Path(f"./figures_zeroshot_satellite/{MODEL}")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TARGET_VAR  = "water_level"
@@ -40,12 +40,11 @@ TARGET_VAR  = "water_level"
 # Chargement des résultats
 # ═══════════════════════════════════════════════════════════════
 print("=" * 60)
-print("PLOT ZERO-SHOT — STATIONS SATELLITE 10J (+ PRÉCIPITATIONS)")
+print("PLOT ZERO-SHOT — STATIONS SATELLITE 27J (+ PRÉCIPITATIONS)")
 print("=" * 60)
 
 if not RESULTS_P.exists():
     print(f"❌ Pas de résultats trouvés : {RESULTS_P}")
-    print("   Lance d'abord : python zeroshot_evaluation.py")
     exit(1)
 
 print(f"\n📂 Chargement de {RESULTS_P}...")
@@ -57,14 +56,9 @@ df_metrics["NSE"] = pd.to_numeric(df_metrics["NSE"], errors="coerce")
 df_metrics["KGE"] = pd.to_numeric(df_metrics["KGE"], errors="coerce")
 df_metrics = df_metrics.set_index("station")
 
-print(f"\n{'=' * 60}")
-print(f"STATS GLOBALES SUR {len(df_metrics)} STATIONS")
-print(f"{'=' * 60}")
-print(df_metrics.describe().round(3))
 print(f"\nMédiane NSE : {df_metrics['NSE'].median():.3f}")
 print(f"Médiane KGE : {df_metrics['KGE'].median():.3f}")
 print(f"Stations NSE > 0.5 : {(df_metrics['NSE'] > 0.5).sum()}")
-print(f"Stations NSE > 0.0 : {(df_metrics['NSE'] > 0.0).sum()}")
 print(f"Stations NSE < 0.0 : {(df_metrics['NSE'] < 0.0).sum()}")
 
 print(f"\nGénération des figures...")
@@ -82,7 +76,6 @@ for sid in stations:
         obs_var = f"{TARGET_VAR}_obs"
         sim_var = f"{TARGET_VAR}_sim"
         if obs_var not in ds or sim_var not in ds:
-            print(f"  ⚠️  {sid} : variables {obs_var}/{sim_var} absentes")
             continue
 
         dates = ds.date.values
@@ -114,7 +107,7 @@ for sid in stations:
 
         # Panel précipitations (barres inversées)
         if precip is not None:
-            ax_p.bar(precip_dates, precip, width=8, color='#4A90D9',
+            ax_p.bar(precip_dates, precip, width=20, color='#4A90D9',
                      alpha=0.7, edgecolor='none')
             ax_p.invert_yaxis()
             ax_p.set_ylabel('Précip\n(mm/j)', fontsize=8)
@@ -162,7 +155,7 @@ axes[0].axvline(df_metrics["NSE"].median(), color="red", lw=2, ls="--",
 axes[0].axvline(0, color="gray", lw=1, ls=":")
 axes[0].set_xlabel("NSE")
 axes[0].set_ylabel("Nb stations")
-axes[0].set_title(f"Distribution NSE — Zero-shot satellite ~10j (n={len(df_metrics)})")
+axes[0].set_title(f"Distribution NSE — Zero-shot satellite ~27j (n={len(df_metrics)})")
 axes[0].legend()
 axes[0].grid(True, alpha=0.3)
 
