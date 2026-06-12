@@ -30,7 +30,7 @@ OUT_DIR     = Path('./Exploring_data/Analyse_zeroshot_27j')
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Métriques depuis le CSV du run
-METRICS_CSV = './runs/arlstm_feat27jHigh_modele2_1205_153310/validation/model_epoch009/validation_metrics.csv'
+METRICS_CSV = './runs/arlstm_feat27jHigh_modele2_1805_171636/validation/model_epoch008/validation_metrics.csv'
 
 FREQ_LABEL  = "27j"
 FREQ_JOURS  = 27

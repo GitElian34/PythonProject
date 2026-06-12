@@ -22,6 +22,25 @@ validation_end_date: "31/12/2025"
 # ═══════════════════════════════════════════════
 # VARIABLES
 # ═══════════════════════════════════════════════
+num_workers: 4
+cache_validation_data: True
+
+#statics_embedding:
+#  type: fc
+#  hiddens:
+#    - 30
+#    - 20
+#  activation: tanh
+#  dropout: 0.0
+
+dynamics_embedding:
+  type: fc
+  hiddens:
+    - 30
+    - 20
+  activation: tanh
+  dropout: 0.2
+
 target_variables:
   - water_level
 
@@ -61,8 +80,8 @@ dynamic_inputs:
   - clim_std_20j
   - precip_max_J27
   - precip_last7
-#  - nb_jours_pluie_J27
-#  - precip_mean_J14
+  - nb_jours_pluie_J27
+  - precip_mean_J14
 #  - doy_sin
 #  - doy_cos
 #  - water_level_shift2  # ← manque
@@ -100,14 +119,13 @@ predict_last_n:
 
 batch_size: 64
 output_dropout: 0.4
-clip_gradient_norm: 1
+clip_gradient_norm: 0.8
 target_noise_std: 0.01
 optimizer: AdamW
 learning_rate:
-  0: 0.0004
-  6: 0.0003
-  12: 0.0001
-  20: 0.00005
+  0: 0.0006
+  12: 0.0003
+  20: 0.0001
 
 epochs: 30
 
@@ -116,7 +134,7 @@ loss: NSE
 initial_forget_bias: 3
 save_validation_results: True
 # Moins de updates car séries plus courtes (36 pts/an vs 365)
-max_updates_per_epoch: 4000
+max_updates_per_epoch: 20000
 
 # ═══════════════════════════════════════════════
 # VALIDATION

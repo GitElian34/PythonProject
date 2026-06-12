@@ -27,7 +27,7 @@ from pathlib import Path
 
 # ─── Paramètres ─────────────────────────────────────────────────────────────
 DB_PATH       = './data/hydro_data.db'
-OUTPUT_DIR    = './data/IA/NeuralHydrology_satellite_27D/'
+OUTPUT_DIR = './data/IA/NeuralHydrology_feat27j/'
 BASINS_DIR    = './AI/LSTM/NeuralHydro_satellite_27D/'
 STATIONS_FILE = './Exploring_data/Stations_27j/stations_27j.txt'
 

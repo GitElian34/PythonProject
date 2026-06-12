@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+    
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css"/>
+    
+            <meta name="viewport" content="width=device-width,
+                initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <style>
+                #map_ca920396c5313dde008061d07c9f5c8a {
+                    position: relative;
+                    width: 100.0%;
+                    height: 100.0%;
+                    left: 0.0%;
+                    top: 0.0%;
+                }
+                .leaflet-container { font-size: 1rem; }
+            </style>
+
+            <style>html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            </style>
+
+            <style>#map {
+                position:absolute;
+                top:0;
+                bottom:0;
+                right:0;
+                left:0;
+                }
+            </style>
+
+            <script>
+                L_NO_TOUCH = false;
+                L_DISABLE_3D = false;
+            </script>
+
+        
+</head>
+<body>
+    
+    
+        <div style="position:fixed;bottom:20px;left:20px;z-index:1000;
+                    background:white;padding:10px 14px;border-radius:6px;
+                    box-shadow:0 1px 5px rgba(0,0,0,0.4);font-size:12px;">
+          <b>0000000006322</b><br>
+          <span style="color:orange;">●</span> Station alti — NSE=0.327<br>
+          <span style="color:#E65100;">●</span> Station insitu — K731261001 (1.0 km)<br>
+          Outliers détectés : 7
+        </div>
+        
+    
+            <div class="folium-map" id="map_ca920396c5313dde008061d07c9f5c8a" ></div>
+        
+</body>
+<script>
+    
+    
+            var map_ca920396c5313dde008061d07c9f5c8a = L.map(
+                "map_ca920396c5313dde008061d07c9f5c8a",
+                {
+                    center: [47.0132358595, 1.131088944],
+                    crs: L.CRS.EPSG3857,
+                    ...{
+  "zoom": 9,
+  "zoomControl": true,
+  "preferCanvas": false,
+}
+
+                }
+            );
+
+            
+
+        
+    
+            var tile_layer_90b7fed24b7aa36b1e063680fa554eb6 = L.tileLayer(
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                {
+  "minZoom": 0,
+  "maxZoom": 19,
+  "maxNativeZoom": 19,
+  "noWrap": false,
+  "attribution": "\u0026copy; \u003ca href=\"https://www.openstreetmap.org/copyright\"\u003eOpenStreetMap\u003c/a\u003e contributors",
+  "subdomains": "abc",
+  "detectRetina": false,
+  "tms": false,
+  "opacity": 1,
+}
+
+            );
+        
+    
+            tile_layer_90b7fed24b7aa36b1e063680fa554eb6.addTo(map_ca920396c5313dde008061d07c9f5c8a);
+        
+    
+            var circle_marker_9fc5078005ded045bab1dde640522ca6 = L.circleMarker(
+                [47.0096, 1.1351],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "orange", "fillOpacity": 0.9, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 9, "stroke": true, "weight": 2}
+            ).addTo(map_ca920396c5313dde008061d07c9f5c8a);
+        
+    
+        var popup_68bd70b65ece566235cbc365ac1ee930 = L.popup({
+  "maxWidth": 250,
+});
+
+        
+            
+                var html_0b0a183d3bce7fe915e3d943e6bf941f = $(`<div id="html_0b0a183d3bce7fe915e3d943e6bf941f" style="width: 100.0%; height: 100.0%;"><b>Station alti 0000000006322</b><br>NSE = 0.327<br>Outliers : 7<br>lon/lat : 1.1351, 47.0096</div>`)[0];
+                popup_68bd70b65ece566235cbc365ac1ee930.setContent(html_0b0a183d3bce7fe915e3d943e6bf941f);
+            
+        
+
+        circle_marker_9fc5078005ded045bab1dde640522ca6.bindPopup(popup_68bd70b65ece566235cbc365ac1ee930)
+        ;
+
+        
+    
+    
+            circle_marker_9fc5078005ded045bab1dde640522ca6.bindTooltip(
+                `<div>
+                     ALTI 0000000006322 | NSE=0.327
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_d7259191397bceb0416666f346e16d0e = L.circleMarker(
+                [47.016871719, 1.127077888],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#E65100", "fillOpacity": 0.9, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 8, "stroke": true, "weight": 2}
+            ).addTo(map_ca920396c5313dde008061d07c9f5c8a);
+        
+    
+        var popup_07c18e4650263da7837fe93151d00a86 = L.popup({
+  "maxWidth": 250,
+});
+
+        
+            
+                var html_dee841876115024b1a8b88273ead0af9 = $(`<div id="html_dee841876115024b1a8b88273ead0af9" style="width: 100.0%; height: 100.0%;"><b>Station insitu K731261001</b><br>Distance : 1.0 km<br>lon/lat : 1.1271, 47.0169</div>`)[0];
+                popup_07c18e4650263da7837fe93151d00a86.setContent(html_dee841876115024b1a8b88273ead0af9);
+            
+        
+
+        circle_marker_d7259191397bceb0416666f346e16d0e.bindPopup(popup_07c18e4650263da7837fe93151d00a86)
+        ;
+
+        
+    
+    
+            circle_marker_d7259191397bceb0416666f346e16d0e.bindTooltip(
+                `<div>
+                     INSITU K731261001 (1.0 km)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_e1b9f4aa423a86e28de02e6551d97be5 = L.polyline(
+                [[47.0096, 1.1351], [47.016871719, 1.127077888]],
+                {"bubblingMouseEvents": true, "color": "#2E7D32", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#2E7D32", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 2.5}
+            ).addTo(map_ca920396c5313dde008061d07c9f5c8a);
+        
+    
+            poly_line_e1b9f4aa423a86e28de02e6551d97be5.bindTooltip(
+                `<div>
+                     1.0 km
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+</script>
+</html>

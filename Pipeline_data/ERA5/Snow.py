@@ -86,10 +86,8 @@ def extract_snow_bv_means(data_month: dict, pixels: list[tuple]) -> dict:
 def run_step3c(conn: sqlite3.Connection,
                era5_base: str = DEFAULT_ERA5_BASE) -> dict:
     """
-    Étape 3c : complète les colonnes snow dans era5_bv_jour.
-
-    Returns:
-        {"stations": n, "days_updated": n, "errors": n}
+    Étape 3c optimisée : boucle mois → stations.
+    Chaque .nc snow est chargé UNE SEULE FOIS pour toutes les stations.
     """
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -104,37 +102,38 @@ def run_step3c(conn: sqlite3.Connection,
 
     log.info(f"{len(stations)} stations à traiter pour la neige")
 
+    # Pré-charger tous les pixels
+    all_pixels = {}
+    for station_code, nb_pixels in stations:
+        all_pixels[station_code] = get_era5_pixels(conn, station_code)
+
+    # Dates manquantes par station (set pour lookup rapide)
+    missing_dates = {}
+    for station_code, _ in stations:
+        rows = conn.execute("""
+            SELECT date FROM era5_bv_jour
+            WHERE station_code = ? AND snow_depth_bv IS NULL
+        """, (station_code,)).fetchall()
+        missing_dates[station_code] = {r[0] for r in rows}
+
     total_updated = 0
     errors = 0
 
-    for sta_idx, (station_code, nb_pixels) in enumerate(stations):
-        pixels = get_era5_pixels(conn, station_code)
+    # Boucle MOIS → stations
+    for year in YEARS:
+        for month in MONTHS:
+            data = load_snow_month(era5_base, year, month)
+            if data is None:
+                continue
 
-        # Dates sans neige pour cette station
-        dates_missing = conn.execute("""
-            SELECT date FROM era5_bv_jour
-            WHERE station_code = ? AND snow_depth_bv IS NULL
-            ORDER BY date
-        """, (station_code,)).fetchall()
+            batch_count = 0
 
-        if not dates_missing:
-            continue
-
-        dates_set = {r[0] for r in dates_missing}
-        cache_month = {}
-        updated = 0
-
-        for year in YEARS:
-            for month in MONTHS:
-                month_key = f"{year}/{month}"
-
-                if month_key not in cache_month:
-                    data = load_snow_month(era5_base, year, month)
-                    cache_month[month_key] = data
-
-                data = cache_month[month_key]
-                if data is None:
+            for station_code, nb_pixels in stations:
+                dates_set = missing_dates[station_code]
+                if not dates_set:
                     continue
+
+                pixels = all_pixels[station_code]
 
                 try:
                     results = extract_snow_bv_means(data, pixels)
@@ -145,16 +144,11 @@ def run_step3c(conn: sqlite3.Connection,
                 for date_str, (sd, smlt) in results.items():
                     if date_str in dates_set:
                         update_era5_snow(conn, station_code, date_str, sd, smlt)
-                        updated += 1
+                        batch_count += 1
 
-            cache_month.clear()
-
-        conn.commit()
-        total_updated += updated
-
-        if (sta_idx + 1) % 10 == 0:
-            log.info(f"  {sta_idx+1}/{len(stations)} stations "
-                     f"({total_updated} jours mis à jour)")
+            conn.commit()
+            total_updated += batch_count
+            log.info(f"  {year}/{month} — {batch_count} jours mis à jour (total: {total_updated})")
 
     log.info(f"Étape 3c terminée : {total_updated} jours avec neige, {errors} erreurs")
     return {"stations": len(stations), "days_updated": total_updated, "errors": errors}

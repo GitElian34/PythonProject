@@ -138,7 +138,6 @@ def run_step2a(conn: sqlite3.Connection,
         return {"computed": 0, "errors": 0}
 
     # Vérifier que les rasters existent
-    log.info("0")
     log.info([dir_path, acc_path])
     for p in [dir_path, acc_path]:
         log.info(p)
@@ -147,7 +146,6 @@ def run_step2a(conn: sqlite3.Connection,
             return {"computed": 0, "errors": len(stations)}
 
     # Clipper une seule fois
-    log.info("1")
     tmp_dir, tmp_acc = clip_rasters_france(dir_path, acc_path)
 
     computed, errors = 0, 0
@@ -156,7 +154,6 @@ def run_step2a(conn: sqlite3.Connection,
     for i, sta in enumerate(stations):
         code = sta["station_code"]
         log.info(f"[{i+1}/{total}] {code} ({sta.get('hydroweb_name', '?')})...")
-        log.info("2")
         try:
             aire, wkt = compute_watershed(
                 sta["lon"], sta["lat"], tmp_dir, tmp_acc
@@ -176,7 +173,6 @@ def run_step2a(conn: sqlite3.Connection,
         except Exception as e:
             log.error(f"  → ERREUR : {e}")
             errors += 1
-    log.info("3")
     log.info(f"Étape 2a terminée : {computed} BV calculés, {errors} erreurs")
     return {"computed": computed, "errors": errors}
 

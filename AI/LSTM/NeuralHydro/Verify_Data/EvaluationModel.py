@@ -1,122 +1,88 @@
 #!/usr/bin/env python3
 """
-eval_multi_epochs.py
-Évalue plusieurs epochs d'un run NeuralHydrology et compare NSE/KGE.
+eval_zeroshot_satellite_27j.py
+Évalue un modèle déjà entraîné sur les stations satellite 27j en zero-shot.
 """
 
-from pathlib import Path
-import pandas as pd
-import torch
+import pickle
 import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
+from pathlib import Path
 from neuralhydrology.utils.config import Config
 from neuralhydrology.evaluation.evaluate import start_evaluation
-
+import torch
 
 torch.set_num_threads(8)
+
 # ─── Paramètres ─────────────────────────────────────────────────────────────
-RUN_DIR = Path("./runs/arlstm_feat10jLow_modele2_3004_130415")
-EPOCHS  = [2, 4, 5]   # epochs à évaluer
+MODEL   = "arlstm_feat27jHigh_modele2_2205_152119"
+EPOCH   = 5
+PERIOD  = "validation"
 
-# Dates de test — à adapter selon ton run
+RUN_DIR            = Path(f"./runs/{MODEL}")
+STATIONS_FILE      = Path("./AI/LSTM/NeuralHydro_satellite_27D/stations_27j.txt")
+DATA_DIR_SATELLITE = Path("./data/IA/NeuralHydrology_feat27j")
 
+# ─── Modifier temporairement le config pour pointer vers les données satellite ─
+from ruamel.yaml import YAML
+ryaml = YAML()
+ryaml.preserve_quotes = True
 
-# ─── Config ──────────────────────────────────────────────────────────────────
-cfg = Config(RUN_DIR / "config.yml")
+config_path = RUN_DIR / "config.yml"
+config_eval = RUN_DIR / "config_eval_satellite.yml"
 
-# ─── Évaluation par epoch ────────────────────────────────────────────────────
-print(f"Run : {RUN_DIR.name}")
-print(f"Epochs à évaluer : {EPOCHS}\n")
+with open(config_path) as f:
+    cfg_dict = ryaml.load(f)
 
-results = []
+cfg_dict["validation_basin_file"] = str(STATIONS_FILE.resolve())
+cfg_dict["data_dir"]              = str(DATA_DIR_SATELLITE.resolve())
 
-for epoch in EPOCHS:
-    # Vérifier si déjà évalué
-    test_dir = RUN_DIR / "test"
-    existing = list(test_dir.glob(f"model_epoch{epoch:03d}*/test_metrics.csv"))
+with open(config_eval, "w") as f:
+    ryaml.dump(cfg_dict, f)
 
-    if existing:
-        print(f"Epoch {epoch:>3} — déjà évalué, lecture du CSV...")
-        csv_path = existing[0]
-    else:
-        print(f"Epoch {epoch:>3} — lancement évaluation...")
-        start_evaluation(cfg=cfg, run_dir=RUN_DIR, epoch=epoch, period="test")
-        candidates = list(test_dir.glob(f"model_epoch{epoch:03d}*/test_metrics.csv"))
-        if not candidates:
-            print(f"  ⚠️  Pas de résultats trouvés pour epoch {epoch}")
-            continue
-        csv_path = candidates[0]
+# ─── Évaluation ─────────────────────────────────────────────────────────────
+print(f"Run    : {MODEL}")
+print(f"Epoch  : {EPOCH}")
+print(f"Data   : {DATA_DIR_SATELLITE}")
+print(f"Stations : {STATIONS_FILE}\n")
 
-    # Lire les métriques
-    df      = pd.read_csv(csv_path)
-    nse_col = [c for c in df.columns if 'NSE' in c]
-    kge_col = [c for c in df.columns if 'KGE' in c]
-    nse_med = df[nse_col[0]].median() if nse_col else np.nan
-    kge_med = df[kge_col[0]].median() if kge_col else np.nan
-    nse_std = df[nse_col[0]].std()    if nse_col else np.nan
-    kge_std = df[kge_col[0]].std()    if kge_col else np.nan
+cfg = Config(config_eval)
+start_evaluation(cfg=cfg, run_dir=RUN_DIR, epoch=EPOCH, period=PERIOD)
 
-    results.append({
-        "epoch"  : epoch,
-        "nse_med": nse_med,
-        "kge_med": kge_med,
-        "nse_std": nse_std,
-        "kge_std": kge_std,
-    })
-    print(f"  NSE médian = {nse_med:.4f}  KGE médian = {kge_med:.4f}")
+# ─── Lecture résultats ───────────────────────────────────────────────────────
+results_p = RUN_DIR / PERIOD / f"model_epoch{EPOCH:03d}" / f"{PERIOD}_results.p"
+with open(results_p, "rb") as f:
+    raw = pickle.load(f)
 
-# ─── Tableau récap ───────────────────────────────────────────────────────────
-df_res = pd.DataFrame(results)
-best_nse = df_res.loc[df_res["nse_med"].idxmax()]
-best_kge = df_res.loc[df_res["kge_med"].idxmax()]
+records = []
+for station, data in raw.items():
+    try:
+        freq_key = list(data.keys())[0]
+        nse = float(np.squeeze(data[freq_key]["NSE"]))
+        kge = float(np.squeeze(data[freq_key]["KGE"]))
+        if not np.isnan(nse):
+            records.append({"station": station, "NSE": nse, "KGE": kge})
+    except Exception:
+        continue
+
+df = pd.DataFrame(records).sort_values("NSE", ascending=False)
 
 print(f"\n{'='*50}")
-print(f"{'Epoch':>6}  {'NSE médian':>11}  {'KGE médian':>11}")
-print("-" * 35)
-for _, r in df_res.iterrows():
-    marker = " ← meilleur NSE" if r["epoch"] == best_nse["epoch"] else ""
-    print(f"{int(r['epoch']):>6}  {r['nse_med']:>11.4f}  {r['kge_med']:>11.4f}{marker}")
-print(f"\n  Meilleur NSE : epoch {int(best_nse['epoch'])} ({best_nse['nse_med']:.4f})")
-print(f"  Meilleur KGE : epoch {int(best_kge['epoch'])} ({best_kge['kge_med']:.4f})")
+print(f"RÉSULTATS ZERO-SHOT — {MODEL} epoch {EPOCH}")
+print(f"{'='*50}")
+print(f"  N stations  : {len(df)}")
+print(f"  NSE médian  : {df['NSE'].median():.3f}")
+print(f"  NSE moyen   : {df['NSE'].mean():.3f}")
+print(f"  KGE médian  : {df['KGE'].median():.3f}")
 
-# ─── Graphiques ──────────────────────────────────────────────────────────────
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-fig.suptitle(f"Comparaison epochs — {RUN_DIR.name}", fontweight="bold")
+print(f"\n  Distribution NSE :")
+bins = [(-np.inf,0,"< 0"), (0,0.3,"0–0.3"), (0.3,0.5,"0.3–0.5"),
+        (0.5,0.7,"0.5–0.7"), (0.7,np.inf,"> 0.7")]
+for lo, hi, label in bins:
+    n = int(((df["NSE"] > lo) & (df["NSE"] <= hi)).sum())
+    print(f"    {label:<10} : {n:>4}  ({n/len(df)*100:.1f}%)")
 
-# NSE
-ax1.plot(df_res["epoch"], df_res["nse_med"], "o-", color="#3b82f6",
-         linewidth=2, markersize=7, label="NSE médian")
-ax1.fill_between(df_res["epoch"],
-                 df_res["nse_med"] - df_res["nse_std"],
-                 df_res["nse_med"] + df_res["nse_std"],
-                 alpha=0.15, color="#3b82f6", label="±1 std")
-ax1.axvline(best_nse["epoch"], color="#ef4444", linestyle="--",
-            linewidth=1, label=f"Meilleur epoch {int(best_nse['epoch'])}")
-ax1.set_xlabel("Epoch")
-ax1.set_ylabel("NSE médian")
-ax1.set_title("NSE")
-ax1.legend(fontsize=9)
-ax1.grid(axis="y", alpha=0.3)
-ax1.spines[["top", "right"]].set_visible(False)
-
-# KGE
-ax2.plot(df_res["epoch"], df_res["kge_med"], "o-", color="#10b981",
-         linewidth=2, markersize=7, label="KGE médian")
-ax2.fill_between(df_res["epoch"],
-                 df_res["kge_med"] - df_res["kge_std"],
-                 df_res["kge_med"] + df_res["kge_std"],
-                 alpha=0.15, color="#10b981", label="±1 std")
-ax2.axvline(best_kge["epoch"], color="#ef4444", linestyle="--",
-            linewidth=1, label=f"Meilleur epoch {int(best_kge['epoch'])}")
-ax2.set_xlabel("Epoch")
-ax2.set_ylabel("KGE médian")
-ax2.set_title("KGE")
-ax2.legend(fontsize=9)
-ax2.grid(axis="y", alpha=0.3)
-ax2.spines[["top", "right"]].set_visible(False)
-
-plt.tight_layout()
-out = f"eval_epochs_{RUN_DIR.name}.png"
-plt.savefig(out, dpi=150, bbox_inches="tight")
-print(f"\n✅ Graphique sauvegardé : {out}")
-plt.show()
+print(f"\n  {'Station':<20} {'NSE':>8} {'KGE':>8}")
+print(f"  {'-'*40}")
+for _, row in df.iterrows():
+    print(f"  {row['station']:<20} {row['NSE']:>8.3f} {row['KGE']:>8.3f}")

@@ -36,7 +36,7 @@ SEED          = 42
 MIN_GAP_JOURS = 60
 MIN_DIST_M    = 500
 FREQ_JOURS    = 27      # ← 27 jours au lieu de 10
-RESET         = True
+RESET         = False
 CLIM_WINDOW   = 20
 
 os.makedirs(os.path.join(OUTPUT_DIR, 'time_series'), exist_ok=True)

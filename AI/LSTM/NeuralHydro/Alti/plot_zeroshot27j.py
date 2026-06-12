@@ -1,13 +1,14 @@
 """
-plot_zeroshot_predictions_27j.py
+plot_outliers_27j.py
 ═══════════════════════════════════════════════════════════════════════════
-Affiche pour chaque station satellite ~27j :
-  - Les précipitations (barres inversées, style hyétogramme)
-  - La série observée (water_level normalisée)
-  - La série prédite par le modèle insitu en zero-shot
-  - Les métriques NSE et KGE
+1. Extrait les résidus depuis le validation_results.p du modèle 27j
+2. Détecte les outliers (|résidu normalisé| > seuil)
+3. Génère un plot zoomé par année contenant des outliers
 
-Lit les validation_results.p + les .nc pour les précipitations.
+Produit :
+  - ./data/outlier_detection/residuals_27j_all_stations.csv
+  - ./figures_zeroshot_satellite/<MODEL>/Outlier_27j/<station>/
+      outlier_<station>_<année>.png
 ═══════════════════════════════════════════════════════════════════════════
 """
 
@@ -16,160 +17,154 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import xarray as xr
 from pathlib import Path
 
 # ═══════════════════════════════════════════════════════════════
 # PARAMÈTRES
 # ═══════════════════════════════════════════════════════════════
-MODEL = "arlstm_feat27jHigh_modele2_1205_153310"
-RUN_DIR     = Path(f"./runs/{MODEL}")
-EPOCH       = 9
-PERIOD      = "validation"
-NC_DIR      = Path("./data/IA/NeuralHydrology_satellite_27D/time_series")
+MODEL  = "arlstm_feat27jHigh_modele2_2205_152119"
+EPOCH  = 5
+PERIOD = "validation"
 
-RESULTS_P   = RUN_DIR / PERIOD / f"model_epoch{EPOCH:03d}" / f"{PERIOD}_results.p"
-METRICS_CSV = RUN_DIR / PERIOD / f"model_epoch{EPOCH:03d}" / f"{PERIOD}_metrics.csv"
+RUN_DIR   = Path(f"./runs/{MODEL}")
+RESULTS_P = RUN_DIR / PERIOD / f"model_epoch{EPOCH:03d}" / f"{PERIOD}_results.p"
 
-OUT_DIR     = Path(f"./figures_zeroshot_satellite/{MODEL}")
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT_CSV  = Path("./data/outlier_detection/residuals_27j_all_stations.csv")
+BASE_DIR = Path(f"./figures_zeroshot_satellite/{MODEL}/Outlier_27j")
+OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
 
-TARGET_VAR  = "water_level"
+OUTLIER_THRESHOLD = 3.0
+TARGET_VAR        = "water_level"
+
 
 # ═══════════════════════════════════════════════════════════════
-# Chargement des résultats
+# 1. EXTRACTION DES RÉSIDUS
 # ═══════════════════════════════════════════════════════════════
 print("=" * 60)
-print("PLOT ZERO-SHOT — STATIONS SATELLITE 27J (+ PRÉCIPITATIONS)")
+print("EXTRACTION RÉSIDUS — MODÈLE 27J")
 print("=" * 60)
 
 if not RESULTS_P.exists():
-    print(f"❌ Pas de résultats trouvés : {RESULTS_P}")
+    print(f"❌ Pas de résultats : {RESULTS_P}")
     exit(1)
 
-print(f"\n📂 Chargement de {RESULTS_P}...")
+print(f"Chargement de {RESULTS_P}...")
 with open(RESULTS_P, 'rb') as f:
     results = pickle.load(f)
 
-df_metrics = pd.read_csv(METRICS_CSV, header=None, names=["station", "NSE", "KGE"])
-df_metrics["NSE"] = pd.to_numeric(df_metrics["NSE"], errors="coerce")
-df_metrics["KGE"] = pd.to_numeric(df_metrics["KGE"], errors="coerce")
-df_metrics = df_metrics.set_index("station")
-
-print(f"\nMédiane NSE : {df_metrics['NSE'].median():.3f}")
-print(f"Médiane KGE : {df_metrics['KGE'].median():.3f}")
-print(f"Stations NSE > 0.5 : {(df_metrics['NSE'] > 0.5).sum()}")
-print(f"Stations NSE < 0.0 : {(df_metrics['NSE'] < 0.0).sum()}")
-
-print(f"\nGénération des figures...")
-
-stations = sorted(results.keys())
-
-for sid in stations:
+rows = []
+for sid, sub in results.items():
     try:
-        sub = results[sid]
-        freqs = list(sub.keys())
-        if not freqs:
-            continue
-        ds = sub[freqs[0]]['xr']
-
+        freq = list(sub.keys())[0]
+        ds   = sub[freq]['xr']
         obs_var = f"{TARGET_VAR}_obs"
         sim_var = f"{TARGET_VAR}_sim"
         if obs_var not in ds or sim_var not in ds:
             continue
 
-        dates = ds.date.values
-        obs = ds[obs_var].values.flatten()
-        sim = ds[sim_var].values.flatten()
+        dates = pd.to_datetime(ds.date.values)
+        obs   = ds[obs_var].values.flatten()
+        pred  = ds[sim_var].values.flatten()
 
-        nse = df_metrics.loc[sid, 'NSE'] if sid in df_metrics.index else np.nan
-        kge = df_metrics.loc[sid, 'KGE'] if sid in df_metrics.index else np.nan
-
-        # ── Charger les précipitations depuis le .nc ────────────────────
-        precip = None
-        precip_dates = None
-        for nc_name in [f"{sid}.nc", f"{str(sid).zfill(13)}.nc"]:
-            nc_path = NC_DIR / nc_name
-            if nc_path.exists():
-                ds_nc = xr.open_dataset(nc_path)
-                if 'precipitation_J0' in ds_nc:
-                    precip = ds_nc['precipitation_J0'].values
-                    precip_dates = pd.to_datetime(ds_nc.date.values)
-                ds_nc.close()
-                break
-
-        # ── Figure ──────────────────────────────────────────────────────
-        fig, (ax_p, ax_wl) = plt.subplots(
-            2, 1, figsize=(14, 6),
-            gridspec_kw={'height_ratios': [1, 3], 'hspace': 0.05},
-            sharex=True
-        )
-
-        # Panel précipitations (barres inversées)
-        if precip is not None:
-            ax_p.bar(precip_dates, precip, width=20, color='#4A90D9',
-                     alpha=0.7, edgecolor='none')
-            ax_p.invert_yaxis()
-            ax_p.set_ylabel('Précip\n(mm/j)', fontsize=8)
-            ax_p.grid(True, alpha=0.2)
-            ax_p.spines['bottom'].set_visible(False)
-            ax_p.tick_params(axis='x', labelbottom=False)
-            p95 = np.nanpercentile(precip, 95)
-            if p95 > 0:
-                ax_p.set_ylim(min(p95 * 1.5, np.nanmax(precip)), 0)
-        else:
-            ax_p.set_visible(False)
-
-        # Panel water level
-        ax_wl.plot(dates, obs, 'o-', color="steelblue", lw=1, ms=3,
-                   label=f"Observé (n={(~np.isnan(obs)).sum()})")
-        ax_wl.plot(dates, sim, 's-', color="crimson", lw=1, ms=3, alpha=0.7,
-                   label="Prédit (zero-shot)")
-        ax_wl.axhline(0, color="gray", lw=0.5, ls="--")
-        ax_wl.set_xlabel("Date")
-        ax_wl.set_ylabel("Water level (z-score)")
-        ax_wl.legend(fontsize=8, loc='upper right')
-        ax_wl.grid(True, alpha=0.3)
-        ax_wl.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-        ax_wl.xaxis.set_major_locator(mdates.YearLocator())
-
-        fig.suptitle(f"{sid}  —  NSE = {nse:.3f}  |  KGE = {kge:.3f}",
-                     fontsize=11, fontweight='bold', y=0.98)
-
-        plt.savefig(OUT_DIR / f"{sid}.png", dpi=120, bbox_inches='tight')
-        plt.close()
-        print(f"  ✅ {sid} (NSE={nse:.2f})")
-
+        for d, o, p in zip(dates, obs, pred):
+            rows.append({
+                'station':  str(sid),
+                'date':     d,
+                'obs':      o,
+                'pred':     p,
+                'residual': o - p if not (np.isnan(o) or np.isnan(p)) else np.nan,
+            })
     except Exception as e:
-        print(f"  ❌ {sid} : {e}")
+        print(f"  ⚠  {sid} : {e}")
+
+df = pd.DataFrame(rows)
+df['date'] = pd.to_datetime(df['date'])
+
+# Normalisation du résidu par station
+def norm_residuals(grp):
+    std = np.nanstd(grp['residual'])
+    grp['residual_norm'] = grp['residual'] / std if std > 0 else np.nan
+    return grp
+
+df = df.groupby('station', group_keys=False).apply(norm_residuals)
+df['is_outlier'] = df['residual_norm'].abs() > OUTLIER_THRESHOLD
+df['year']       = df['date'].dt.year
+
+# Sauvegarde CSV
+df.to_csv(OUT_CSV, index=False)
+print(f"\n✅ {len(df)} lignes → {OUT_CSV}")
+print(f"   {df['station'].nunique()} stations")
+print(f"   {df['is_outlier'].sum()} outliers détectés "
+      f"({df['is_outlier'].mean()*100:.1f}%)")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 2. PLOTS PAR ANNÉE
+# ═══════════════════════════════════════════════════════════════
+print(f"\nGénération des figures...")
+
+stations = sorted(df['station'].unique())
+print(f"📊 {len(stations)} stations\n")
+
+n_plots = 0
+
+for sta in stations:
+    grp      = df[df['station'] == sta].sort_values('date')
+    outliers = grp[grp['is_outlier']]
+
+    if len(outliers) == 0:
+        print(f"  {sta:>15s} | 0 outliers → skip")
         continue
 
-# ═══════════════════════════════════════════════════════════════
-# Histogramme global
-# ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
+    years_with_outliers = sorted(outliers['year'].unique())
+    sta_dir = BASE_DIR / sta
+    sta_dir.mkdir(parents=True, exist_ok=True)
 
-axes[0].hist(df_metrics["NSE"].dropna(), bins=20, color="steelblue", edgecolor="white")
-axes[0].axvline(df_metrics["NSE"].median(), color="red", lw=2, ls="--",
-                label=f"Médiane = {df_metrics['NSE'].median():.2f}")
-axes[0].axvline(0, color="gray", lw=1, ls=":")
-axes[0].set_xlabel("NSE")
-axes[0].set_ylabel("Nb stations")
-axes[0].set_title(f"Distribution NSE — Zero-shot satellite ~27j (n={len(df_metrics)})")
-axes[0].legend()
-axes[0].grid(True, alpha=0.3)
+    for year in years_with_outliers:
+        grp_year = grp[grp['year'] == year]
+        out_year = outliers[outliers['year'] == year]
 
-axes[1].hist(df_metrics["KGE"].dropna(), bins=20, color="forestgreen", edgecolor="white")
-axes[1].axvline(df_metrics["KGE"].median(), color="red", lw=2, ls="--",
-                label=f"Médiane = {df_metrics['KGE'].median():.2f}")
-axes[1].axvline(0, color="gray", lw=1, ls=":")
-axes[1].set_xlabel("KGE")
-axes[1].set_ylabel("Nb stations")
-axes[1].set_title("Distribution KGE")
-axes[1].legend()
-axes[1].grid(True, alpha=0.3)
+        fig, ax = plt.subplots(figsize=(12, 4))
 
-plt.tight_layout()
-plt.savefig(OUT_DIR / "_distribution_metrics.png", dpi=120)
-plt.close()
-print(f"\n✅ Toutes les figures dans : {OUT_DIR}")
+        ax.plot(grp_year['date'], grp_year['obs'], '-o', color='#5B9BD5',
+                markersize=5, linewidth=1, label='Observé', zorder=3)
+        ax.plot(grp_year['date'], grp_year['pred'], '-o', color='#E88B8B',
+                markersize=5, linewidth=1, label='Prédit', zorder=2)
+
+        for _, row in out_year.iterrows():
+            ax.plot([row['date'], row['date']], [row['obs'], row['pred']],
+                    color='red', linewidth=2, alpha=0.7, zorder=4)
+            ax.scatter(row['date'], row['obs'], s=150, facecolors='none',
+                       edgecolors='red', linewidths=2, zorder=5)
+            ax.annotate(f"{row['residual_norm']:+.1f}σ",
+                        xy=(row['date'], row['obs']),
+                        xytext=(0, 12 if row['residual'] > 0 else -14),
+                        textcoords='offset points',
+                        fontsize=9, color='red', fontweight='bold',
+                        ha='center',
+                        va='bottom' if row['residual'] > 0 else 'top')
+
+        n_out = len(out_year)
+        ax.set_title(
+            f"Station {sta}  —  {year}  —  "
+            f"{n_out} outlier{'s' if n_out > 1 else ''}",
+            fontsize=11, fontweight='bold'
+        )
+        ax.set_ylabel('Water level (z-score)')
+        ax.set_xlabel('Date')
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b'))
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+        ax.axhline(y=0, color='grey', linewidth=0.5, linestyle='--')
+
+        plt.tight_layout()
+        out_path = sta_dir / f"outlier_{sta}_{year}.png"
+        fig.savefig(out_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        n_plots += 1
+
+    print(f"  {sta:>15s} | {len(outliers):2d} outliers | "
+          f"{len(years_with_outliers)} années → {sta_dir.name}/")
+
+print(f"\n✅ {n_plots} figures dans {BASE_DIR}")

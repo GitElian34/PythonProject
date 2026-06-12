@@ -1,0 +1,101 @@
+# ============================================================
+# TFT CONFIG — Détection d'outliers hauteur d'eau satellite
+# Données : ~46 000 stations in-situ (train/val) + 136 stations altimétriques (inférence)
+# Step : 27j | Période : 2016-2026
+# ============================================================
+
+data:
+  time_series_dir: ./data/IA/NeuralHydrology_feat27j/time_series
+  attributes_path: ./data/IA/NeuralHydrology_feat27j/attributes/attributes.csv
+  date_origin: "2016-01-01"
+  time_step_days: 27
+  target: water_level
+
+  # Fichier listant les 136 stations altimétriques (inférence uniquement)
+  # Ces stations sont exclues du train/val et utilisées uniquement en détection
+  altimetric_stations_file: ./AI/LSTM/NeuralHydro_satellite_27D/stations_27j.txt
+
+  # Covariables dynamiques (observées — encodeur uniquement)
+  dynamic_inputs:
+    - precipitation_J0
+    - temperature_J0
+    - pet_J0
+    - precip_mean_J3
+    - pet_mean_J3
+    - temp_mean_J3
+    - precip_mean_J10
+    - temp_mean_J10
+    - precip_mean_J14
+    - precip_mean_J27
+    - precip_max_J27
+    - precip_last7
+    - nb_jours_pluie_J27
+    - clim_mean_20j
+    - clim_std_20j
+    - snow_depth_J0
+    - snowmelt_J0
+
+  # Covariables dynamiques connues à l'avance (encodeur + décodeur)
+  known_inputs:
+    - doy_sin
+    - doy_cos
+
+  # Attributs statiques (par station)
+  static_inputs:
+    - aire_km2
+    - lon
+    - lat
+    - frac_urban
+    - frac_forest
+    - frac_agriculture
+    - sg_clay_0_30cm
+    - sg_sand_0_30cm
+    - sg_silt_0_30cm
+    - strahler
+    - elevation_mean
+    - slope_mean
+
+  # Split train/val sur les stations in-situ uniquement
+  # Les stations altimétriques ne participent jamais au split
+  split_by: station
+  train_ratio: 0.80   # 80% in-situ → train
+  val_ratio:   0.20   # 20% in-situ → val (vérité terrain fiable pour les métriques)
+  seed: 42
+
+model:
+  # Fenêtre encodeur : 20 pas = ~540 jours (~18 mois de contexte)
+  # Cohérent avec la saisonnalité hydrologique annuelle
+  encoder_length: 20
+  # Horizon de prédiction : 1 pas (évaluation point par point)
+  prediction_length: 1
+
+  # Architecture
+  hidden_size: 64
+  lstm_layers: 2
+  attention_heads: 4        # hidden_size / attention_heads doit être entier
+  dropout: 0.1
+  hidden_continuous_size: 32
+
+  # Loss quantile — donne les intervalles de confiance pour la détection
+  quantiles: [0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
+
+training:
+  max_epochs: 50
+  batch_size: 128
+  learning_rate: 0.001      # affiné automatiquement par le LR finder
+  gradient_clip_val: 0.1
+  early_stopping_patience: 5
+  num_workers: 4            # à adapter : règle empirique = 4 × nb_GPU
+
+outlier_detection:
+  # Seuil de détection : valeur réelle hors [q_low, q_high]
+  lower_quantile: 0.05
+  upper_quantile: 0.95
+  # Score de sévérité exprimé en IQR au-delà de l'intervalle
+  severity_threshold: 1.5
+
+paths:
+  output_dir: ./data/Transformer/outputs/tft
+  checkpoint_dir: ./data/Transformer/outputs/tft/checkpoints
+  logs_dir: ./data/Transformer/outputs/tft/logs
+  results_dir: ./data/Transformer/outputs/tft/results
