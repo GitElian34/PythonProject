@@ -1,0 +1,1 @@
+/home/sar_hydro/STUDIES/EtudesEB/PythonProject/data/IA/NeuralHydrologyHWNextDtoD/time_series/0000000203624.nc

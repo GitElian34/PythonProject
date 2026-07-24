@@ -12,7 +12,7 @@ Les 3 sont calculés de façon identique :
   nse(zscore(série), zscore(insitu_aligné))
 
 Sorties :
-  ./AI/LSTM/NeuralHydro/Dahiti_test/nse_benchmark_27j.csv
+  ./AI/LSTM/NeuralHydro/Dahiti_test/nse_benchmark_27j.csvC
   ./AI/LSTM/NeuralHydro/Dahiti_test/nse_benchmark_10j.csv
 ═══════════════════════════════════════════════════════════════════════════
 """

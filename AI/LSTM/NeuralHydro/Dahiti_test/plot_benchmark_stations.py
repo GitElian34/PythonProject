@@ -1,301 +1,367 @@
 """
-plot_benchmark_stations.py
-═══════════════════════════════════════════════════════════════════════════
-Pour chaque station avec correspondance DAHITI < 1.5km,
-génère un plot 3 panels par année — tous comparés à l'insitu le plus proche :
+plot_benchmark_dahiti.py
+════════════════════════════════════════════════════════════════════════
+Pour chaque station DAHITI (27j et 10j séparément) :
+  - Panel [1] DAHITI vs Insitu
+  - Panel [2] Modèle (pred) vs Insitu
+  - Panel [3] Modèle vs DAHITI
 
-  [1] HW Next  vs insitu
-  [2] DAHITI   vs insitu
-  [3] Modèle   vs insitu
-
-NSE affiché dans chaque titre de panel.
-
-Usage :
-    python plot_benchmark_stations.py
-    python plot_benchmark_stations.py --freq 27j
-    python plot_benchmark_stations.py --only_station 0000000005209
-═══════════════════════════════════════════════════════════════════════════
+Fixes appliqués :
+  - dropna(subset=['obs','pred']) dès le départ → grille propre
+  - Décalage temporel corrigé par station (médiane des décalages
+    entre grille NeuralHydrology et vraies dates DAHITI BDD)
+  - NSE calculé sur z-scores indépendants
+════════════════════════════════════════════════════════════════════════
 """
 
-import argparse
 import sqlite3
-from pathlib import Path
-
-import geopandas as gpd
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import geopandas as gpd
+from pathlib import Path
 from shapely.geometry import Point
 
 # ═══════════════════════════════════════════════════════════════
 # PARAMÈTRES
 # ═══════════════════════════════════════════════════════════════
-HWNEXT_DB   = "./data/hydroweb_next.db"
-DAHITI_DB   = "./data/dahiti.db"
-INSITU_DB   = "./data/insitu_data.db"
-INSITU_SHP  = "./data/insitu/shp/station_schapi_alti_ref_2025_river.gpkg"
+DAHITI_DB  = "./data/dahiti.db"
+INSITU_DB  = "./data/insitu_data.db"
+INSITU_SHP = "./data/insitu/shp/station_schapi_alti_ref_2025_river.gpkg"
 
-RESIDUALS_27J = "./data/outlier_detection/residuals_27j_hydroweb_next.csv"
-RESIDUALS_10J = "./data/outlier_detection/residuals_10j_hydroweb_next.csv"
-STATIONS_27J  = "./data/IA/NeuralHydrology_hydroweb_next/stations_dahiti_27j.txt"
-STATIONS_10J  = "./data/IA/NeuralHydrology_hydroweb_next/stations_dahiti_10j.txt"
+RESIDUALS_27J = "./data/outlier_detection/residuals_27j_dahiti_clean.csv"
+RESIDUALS_10J = "./data/outlier_detection/residuals_10j_dahiti.csv"
+STATIONS_27J  = "./data/IA/NeuralHydrologyDahiti27jClean/stations_dahiti_27j.txt"
+STATIONS_10J  = "./data/IA/NeuralHydrologyDahitiFull/stations_dahiti_10j.txt"
 
-OUTPUT_DIR    = Path("./figures_benchmark")
-DATE_MIN, DATE_MAX     = "2016-01-01", "2025-12-31"
-DIST_MAX_INSITU_KM     = 50.0
-DIST_MAX_DAHITI_KM     = 1.5
-WINDOW_27J, WINDOW_10J = 14, 5
+OUTPUT_DIR         = Path("./data/outlier_detection/plots_dahiti_v2")
+DATE_MIN, DATE_MAX = "2016-01-01", "2025-12-31"
+DIST_MAX_INSITU_KM = 50.0
 
 # Couleurs
-C_HW  = "#3498db"
-C_D   = "#2ecc71"
-C_MOD = "#e74c3c"
-C_INS = "darkorange"
+C_DA  = "#27ae60"
+C_MOD = "#c0392b"
+C_INS = "#e67e22"
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ═══════════════════════════════════════════════════════════════
-# HELPERS (identiques au CSV)
+# HELPERS
 # ═══════════════════════════════════════════════════════════════
 def zscore(arr):
-    mu, sig = np.nanmean(arr), np.nanstd(arr)
+    arr = np.asarray(arr, dtype=float)
+    mask = ~np.isnan(arr)
+    if mask.sum() < 2:
+        return arr * np.nan
+    mu, sig = arr[mask].mean(), arr[mask].std()
     return (arr - mu) / sig if sig > 0 else arr * 0
 
 def nse(obs, sim):
     mask = ~(np.isnan(obs) | np.isnan(sim))
-    if mask.sum() < 5: return np.nan
+    if mask.sum() < 5:
+        return np.nan
     o, s = obs[mask], sim[mask]
     d = np.sum((o - o.mean()) ** 2)
-    return 1 - np.sum((o - s) ** 2) / d if d > 0 else np.nan
+    return float(1 - np.sum((o - s) ** 2) / d) if d > 0 else np.nan
 
-def align_series(dates_ref, df_ins, window_days):
-    wl = np.full(len(dates_ref), np.nan)
-    for i, d in enumerate(pd.to_datetime(dates_ref)):
-        diff = (df_ins["date"] - d).abs()
-        idx  = diff.idxmin()
-        if diff[idx] <= pd.Timedelta(days=window_days):
-            wl[i] = df_ins.loc[idx, "wl"]
+def align_insitu(dates_alti, df_ins, window_days):
+    """Aligne l'insitu sur les dates altimétriques (fenêtre ±window_days)."""
+    wl = np.full(len(dates_alti), np.nan)
+    ins_dates = df_ins["date"].values
+    ins_wl    = df_ins["wl"].values
+    for i, d in enumerate(pd.to_datetime(dates_alti)):
+        diff = np.abs((pd.to_datetime(ins_dates) - d).total_seconds())
+        idx  = diff.argmin()
+        if diff[idx] <= window_days * 86400:
+            wl[i] = ins_wl[idx]
     return wl
 
-def get_coords(conn, station_code):
-    for code in [station_code, station_code.lstrip("0") or station_code]:
+def get_decalage_median(conn_da, code, df_res_station):
+    """
+    Calcule le décalage temporel médian entre la grille NeuralHydrology
+    (dates du CSV résidus) et les vraies dates DAHITI BDD.
+    Retourne un Timedelta.
+    """
+    sub_ok = df_res_station.dropna(subset=["obs"]).sort_values("date")
+    if len(sub_ok) == 0:
+        return pd.Timedelta(0)
+
+    for c in [str(code).zfill(13), code]:
+        df_bdd = pd.read_sql(
+            "SELECT measure_date AS date FROM measurements "
+            "WHERE station_code = ? AND is_valid = 1 ORDER BY date",
+            conn_da, params=(c,))
+        if df_bdd.empty:
+            continue
+        df_bdd["date"] = pd.to_datetime(df_bdd["date"])
+        df_bdd = df_bdd.groupby("date").first().reset_index()
+
+        decalages = []
+        for _, row in sub_ok.iterrows():
+            diff = (df_bdd["date"] - row["date"]).abs()
+            idx  = diff.idxmin()
+            decalages.append((df_bdd.loc[idx, "date"] - row["date"]).days)
+
+        mediane = int(np.median(decalages))
+        return pd.Timedelta(days=mediane)
+
+    return pd.Timedelta(0)
+
+# ═══════════════════════════════════════════════════════════════
+# CHARGEMENT INSITU
+# ═══════════════════════════════════════════════════════════════
+print("Chargement shapefile insitu...")
+gdf        = gpd.read_file(INSITU_SHP).to_crs("EPSG:2154")
+_cache_ins = {}
+
+def get_insitu_proche(lon, lat):
+    pt   = gpd.GeoSeries([Point(lon, lat)], crs="EPSG:4326").to_crs("EPSG:2154")[0]
+    dist = gdf.geometry.distance(pt)
+    idx  = dist.idxmin()
+    return gdf.loc[idx, "code_sta"], dist[idx] / 1000
+
+def get_insitu_series(code_sta):
+    if code_sta not in _cache_ins:
+        conn = sqlite3.connect(INSITU_DB)
+        df = pd.read_sql("""
+            SELECT date, h_med_wsh AS wl FROM mesures_insitu
+            WHERE code_sta = ? AND date >= ? AND date <= ?
+            ORDER BY date
+        """, conn, params=(code_sta, DATE_MIN, DATE_MAX))
+        conn.close()
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.dropna(subset=["wl"])
+        _cache_ins[code_sta] = df if len(df) >= 5 else None
+    return _cache_ins[code_sta]
+
+def get_coords(conn, code):
+    for c in [str(code).zfill(13), code, code.lstrip("0") or code]:
         df = pd.read_sql(
             "SELECT reference_longitude AS lon, reference_latitude AS lat "
             "FROM stations WHERE station_code = ?",
-            conn, params=(code,)
+            conn, params=(c,)
         )
         if not df.empty:
             return float(df.iloc[0]["lon"]), float(df.iloc[0]["lat"])
     return None, None
 
-def get_alti_series(conn, station_code):
-    for code in [station_code, station_code.lstrip("0") or station_code]:
-        df = pd.read_sql("""
-            SELECT measure_date AS date, orthometric_height AS wl
-            FROM measurements
-            WHERE station_code = ? AND is_valid = 1
-              AND measure_date >= ? AND measure_date <= ?
-            ORDER BY date
-        """, conn, params=(code, DATE_MIN, DATE_MAX))
-        if not df.empty:
-            df["date"] = pd.to_datetime(df["date"])
-            return df.dropna(subset=["wl"])
-    return pd.DataFrame()
-
-def get_insitu_series(code_sta):
-    conn = sqlite3.connect(INSITU_DB)
-    df = pd.read_sql("""
-        SELECT date, h_med_wsh AS wl FROM mesures_insitu
-        WHERE code_sta = ? AND date >= ? AND date <= ?
-        ORDER BY date
-    """, conn, params=(code_sta, DATE_MIN, DATE_MAX))
-    conn.close()
-    df["date"] = pd.to_datetime(df["date"])
-    return df.dropna(subset=["wl"])
-
-def find_dahiti_match(lon, lat, df_d_idx):
-    dists = np.sqrt(
-        ((df_d_idx["lon"] - lon) * 111 * np.cos(np.radians(lat))) ** 2 +
-        ((df_d_idx["lat"] - lat) * 111) ** 2
-    )
-    idx_min = dists.idxmin()
-    dist_km = dists[idx_min]
-    if dist_km <= DIST_MAX_DAHITI_KM:
-        return df_d_idx.loc[idx_min, "station_code"], dist_km
-    return None, float("inf")
-
-def plot_panel(ax, dates, serie_z, ins_z, label_serie, color_serie,
-               code_ins, dist_ins_km, window_label, is_last=False):
-    """Trace une série vs insitu sur un panel."""
-    nse_val = nse(serie_z, ins_z)
-    nse_str = f"NSE={nse_val:.3f}" if not np.isnan(nse_val) else "NSE=N/A"
-
-    ax.plot(dates, serie_z, "-o", color=color_serie,
-            markersize=4, lw=1, label=label_serie, zorder=3)
-    ax.plot(dates, ins_z, "-^", color=C_INS,
-            markersize=4, lw=1, alpha=0.85,
-            label=f"Insitu {code_ins} ({dist_ins_km:.1f}km)  {nse_str}",
-            zorder=2)
-    ax.axhline(0, color="grey", lw=0.5, ls="--")
-    ax.set_ylabel("WL (z-score)")
-    ax.legend(loc="upper right", fontsize=8)
-    ax.grid(True, alpha=0.3, ls="--")
-    if is_last:
-        ax.set_xlabel("Date")
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b"))
-        ax.xaxis.set_major_locator(mdates.MonthLocator())
-    else:
-        ax.tick_params(axis="x", labelbottom=False)
-        ax.spines["bottom"].set_visible(False)
-
 # ═══════════════════════════════════════════════════════════════
-# GÉNÉRATION DES PLOTS
+# FONCTION PRINCIPALE PAR FRÉQUENCE
 # ═══════════════════════════════════════════════════════════════
-def generate_plots_for_freq(stations_file, residuals_csv, freq_label,
-                            window, only_station=None):
-    print(f"\n{'='*60}")
-    print(f"  PLOTS {freq_label}")
-    print(f"{'='*60}")
+def run_freq(stations_file, residuals_csv, freq_label, window_insitu):
+    print(f"\n{'='*65}")
+    print(f"  TRAITEMENT {freq_label}")
+    print(f"{'='*65}")
 
-    out_dir = OUTPUT_DIR / freq_label
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    stations = [s.strip().zfill(13)
-                for s in open(stations_file).read().split() if s.strip()]
+    stations = [s.strip() for s in open(stations_file).read().split() if s.strip()]
+    print(f"  {len(stations)} stations")
 
     df_res = pd.read_csv(residuals_csv)
-    df_res["station"] = df_res["station"].astype(str).str.zfill(13)
+    df_res["station"] = df_res["station"].astype(str)
     df_res["date"]    = pd.to_datetime(df_res["date"])
-    df_res["year"]    = df_res["date"].dt.year
+    df_res = df_res.dropna(subset=["obs", "pred"])
+    print(f"  Lignes résidus après dropna : {len(df_res)}")
 
-    gdf     = gpd.read_file(INSITU_SHP).to_crs("EPSG:2154")
-    conn_hw = sqlite3.connect(HWNEXT_DB)
-    conn_d  = sqlite3.connect(DAHITI_DB)
+    conn_da = sqlite3.connect(DAHITI_DB)
+    results = []
+    out_freq = OUTPUT_DIR / freq_label
+    out_freq.mkdir(parents=True, exist_ok=True)
+    n_plotted = 0
 
-    df_d_idx = pd.read_sql("""
-        SELECT station_code, reference_longitude AS lon, reference_latitude AS lat
-        FROM stations WHERE reference_longitude IS NOT NULL
-    """, conn_d)
-
-    n_plots = 0
-
-    for code in stations:
-        if only_station and code != only_station:
+    for i, code in enumerate(stations):
+        lon, lat = get_coords(conn_da, code)
+        if lon is None:
             continue
 
-        lon, lat = get_coords(conn_hw, code)
-        if lon is None: continue
-
-        code_d, dist_d = find_dahiti_match(lon, lat, df_d_idx)
-        if code_d is None: continue
-
-        pt      = gpd.GeoSeries([Point(lon, lat)], crs="EPSG:4326").to_crs("EPSG:2154")[0]
-        dists_g = gdf.geometry.distance(pt)
-        idx_ins = dists_g.idxmin()
-        dist_ins_km = dists_g[idx_ins] / 1000
-        code_ins    = gdf.loc[idx_ins, "code_sta"]
-        if dist_ins_km > DIST_MAX_INSITU_KM: continue
-
+        code_ins, dist_ins_km = get_insitu_proche(lon, lat)
+        if dist_ins_km > DIST_MAX_INSITU_KM:
+            continue
         df_ins = get_insitu_series(code_ins)
-        if df_ins.empty: continue
+        if df_ins is None:
+            continue
 
-        df_hw = get_alti_series(conn_hw, code)
-        df_d  = get_alti_series(conn_d, code_d)
-        sub   = df_res[df_res["station"] == code].sort_values("date")
-        if sub.empty or df_hw.empty: continue
+        sub = df_res[df_res["station"] == code].sort_values("date")
+        if len(sub) < 5:
+            sub = df_res[df_res["station"] == str(int(code))].sort_values("date")
+        if len(sub) < 5:
+            continue
 
-        sta_dir = out_dir / code
-        sta_dir.mkdir(exist_ok=True)
+        # ── Décalage médian station par station ───────────────
+        decalage = get_decalage_median(conn_da, code, sub)
+        dates_corrigees = pd.to_datetime(sub["date"].values) + decalage
 
-        years = sorted(sub["year"].unique())
-        print(f"  {code} | DAHITI={code_d} ({dist_d:.2f}km) | "
-              f"insitu={code_ins} ({dist_ins_km:.1f}km) | "
-              f"{len(years)} années")
+        # ── Insitu aligné sur les dates corrigées ─────────────
+        ins_aligned = align_insitu(dates_corrigees.values, df_ins, window_insitu)
 
-        for year in years:
-            hw_y  = df_hw[df_hw["date"].dt.year == year].sort_values("date")
-            d_y   = df_d[df_d["date"].dt.year == year].sort_values("date") \
-                    if not df_d.empty else pd.DataFrame()
-            sub_y = sub[sub["year"] == year].sort_values("date")
-            ins_y = df_ins[df_ins["date"].dt.year == year]
+        n_pairs = int(np.sum(~np.isnan(ins_aligned)))
+        if n_pairs < 5:
+            continue
 
-            if hw_y.empty and sub_y.empty: continue
+        obs_z      = zscore(sub["obs"].values)
+        pred_z     = zscore(sub["pred"].values)
+        ins_z      = zscore(ins_aligned)
 
-            fig, axes = plt.subplots(3, 1, figsize=(13, 11),
-                                     gridspec_kw={"height_ratios": [3, 3, 3],
-                                                  "hspace": 0.08},
-                                     sharex=True)
-            ax1, ax2, ax3 = axes
+        nse_da     = nse(obs_z,  ins_z)
+        nse_mod    = nse(pred_z, ins_z)
+        nse_mod_da = nse(pred_z, obs_z)
 
-            fig.suptitle(f"Station {code}  —  {freq_label}  —  {year}\n"
-                         f"DAHITI={code_d} ({dist_d:.2f}km)  |  "
-                         f"Insitu={code_ins} ({dist_ins_km:.1f}km)",
-                         fontsize=11, fontweight="bold")
+        results.append({
+            "station"        : code,
+            "freq"           : freq_label,
+            "code_insitu"    : code_ins,
+            "dist_insitu_km" : round(dist_ins_km, 1),
+            "n_dates"        : len(sub),
+            "n_insitu_pairs" : n_pairs,
+            "decalage_j"     : decalage.days,
+            "nse_dahiti_ins" : round(nse_da,     3) if not np.isnan(nse_da)     else np.nan,
+            "nse_modele_ins" : round(nse_mod,    3) if not np.isnan(nse_mod)    else np.nan,
+            "nse_modele_da"  : round(nse_mod_da, 3) if not np.isnan(nse_mod_da) else np.nan,
+        })
 
-            # ── Panel 1 : HW Next vs insitu ───────────────────
-            if not hw_y.empty:
-                ins_hw_y = align_series(hw_y["date"].values, ins_y.rename(
-                    columns={"wl": "wl"}), window) if not ins_y.empty else np.full(len(hw_y), np.nan)
-                ax1.set_title("[1] HW Next vs Insitu", fontsize=10, fontweight="bold")
-                plot_panel(ax1, hw_y["date"], zscore(hw_y["wl"].values),
-                           zscore(ins_hw_y), "HW Next", C_HW,
-                           code_ins, dist_ins_km, window)
-            else:
-                ax1.text(0.5, 0.5, "HW Next non disponible",
-                         ha="center", va="center", transform=ax1.transAxes)
+        # ── Plot ──────────────────────────────────────────────
+        fig, axes = plt.subplots(3, 1, figsize=(14, 11), sharex=True)
+        fig.suptitle(
+            f"Station DAHITI {code} — {freq_label}\n"
+            f"Insitu={code_ins} ({dist_ins_km:.1f}km) | "
+            f"n={len(sub)} dates | décalage corrigé={decalage.days}j",
+            fontsize=11, fontweight="bold"
+        )
 
-            # ── Panel 2 : DAHITI vs insitu ────────────────────
-            if not d_y.empty:
-                ins_d_y = align_series(d_y["date"].values, ins_y.rename(
-                    columns={"wl": "wl"}), window) if not ins_y.empty else np.full(len(d_y), np.nan)
-                ax2.set_title("[2] DAHITI vs Insitu", fontsize=10, fontweight="bold")
-                plot_panel(ax2, d_y["date"], zscore(d_y["wl"].values),
-                           zscore(ins_d_y), f"DAHITI {code_d}", C_D,
-                           code_ins, dist_ins_km, window)
-            else:
-                ax2.text(0.5, 0.5, "DAHITI non disponible",
-                         ha="center", va="center", transform=ax2.transAxes)
-                ax2.set_title("[2] DAHITI vs Insitu", fontsize=10, fontweight="bold")
+        dates_plot = dates_corrigees
 
-            # ── Panel 3 : Modèle vs insitu ────────────────────
-            if not sub_y.empty:
-                ins_mod_y = align_series(sub_y["date"].values, ins_y.rename(
-                    columns={"wl": "wl"}), window) if not ins_y.empty else np.full(len(sub_y), np.nan)
-                ax3.set_title("[3] Modèle vs Insitu", fontsize=10, fontweight="bold")
-                plot_panel(ax3, sub_y["date"], zscore(sub_y["pred"].values),
-                           zscore(ins_mod_y), "Modèle (pred)", C_MOD,
-                           code_ins, dist_ins_km, window, is_last=True)
-            else:
-                ax3.text(0.5, 0.5, "Modèle non disponible",
-                         ha="center", va="center", transform=ax3.transAxes)
-                ax3.set_title("[3] Modèle vs Insitu", fontsize=10, fontweight="bold")
+        # Panel 1 — DAHITI vs Insitu
+        ax1 = axes[0]
+        ax1.plot(dates_plot, obs_z,  color=C_DA,  lw=1.8, marker="o",
+                 ms=4, label="DAHITI (obs)")
+        ax1.plot(dates_plot, ins_z,  color=C_INS, lw=1.5, marker="^",
+                 ms=4, ls="--", label=f"Insitu {code_ins}  NSE={nse_da:.3f}")
+        ax1.axhline(0, color="gray", lw=0.7, ls=":")
+        ax1.set_ylabel("WL (z-score)", fontsize=9)
+        ax1.set_title("[1] DAHITI vs Insitu", fontsize=10, fontweight="bold")
+        ax1.legend(fontsize=8, loc="upper right")
+        ax1.grid(True, alpha=0.3)
 
-            plt.tight_layout()
-            fig.savefig(sta_dir / f"benchmark_{code}_{year}.png",
-                        dpi=150, bbox_inches="tight")
-            plt.close(fig)
-            n_plots += 1
+        # Panel 2 — Modèle vs Insitu
+        ax2 = axes[1]
+        ax2.plot(dates_plot, pred_z, color=C_MOD, lw=1.8, marker="o",
+                 ms=4, label="Modèle (pred)")
+        ax2.plot(dates_plot, ins_z,  color=C_INS, lw=1.5, marker="^",
+                 ms=4, ls="--", label=f"Insitu {code_ins}  NSE={nse_mod:.3f}")
+        ax2.axhline(0, color="gray", lw=0.7, ls=":")
+        ax2.set_ylabel("WL (z-score)", fontsize=9)
+        ax2.set_title("[2] Modèle vs Insitu", fontsize=10, fontweight="bold")
+        ax2.legend(fontsize=8, loc="upper right")
+        ax2.grid(True, alpha=0.3)
 
-    conn_hw.close()
-    conn_d.close()
-    print(f"\n✅ {n_plots} figures → {out_dir}")
+        # Panel 3 — Modèle vs DAHITI
+        ax3 = axes[2]
+        ax3.plot(dates_plot, pred_z, color=C_MOD, lw=1.8, marker="o",
+                 ms=4, label="Modèle (pred)")
+        ax3.plot(dates_plot, obs_z,  color=C_DA,  lw=1.5, marker="^",
+                 ms=4, ls="--", label=f"DAHITI (obs)  NSE={nse_mod_da:.3f}")
+        ax3.axhline(0, color="gray", lw=0.7, ls=":")
+        ax3.set_ylabel("WL (z-score)", fontsize=9)
+        ax3.set_xlabel("Date", fontsize=9)
+        ax3.set_title("[3] Modèle vs DAHITI", fontsize=10, fontweight="bold")
+        ax3.legend(fontsize=8, loc="upper right")
+        ax3.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        out_path = out_freq / f"{code}_{freq_label}.png"
+        fig.savefig(out_path, dpi=130, bbox_inches="tight")
+        plt.close(fig)
+        n_plotted += 1
+
+        if (i + 1) % 30 == 0:
+            print(f"  {i+1}/{len(stations)} traitées...")
+
+    conn_da.close()
+
+    df_out = pd.DataFrame(results)
+    csv_path = OUTPUT_DIR / f"benchmark_dahiti_{freq_label}.csv"
+    df_out.to_csv(csv_path, index=False)
+
+    print(f"\n  Stations traitées : {len(df_out)}")
+    print(f"  Plots générés     : {n_plotted}  → {out_freq}/")
+    print(f"  CSV exporté       : {csv_path}")
+    if len(df_out) == 0:
+        print("  ⚠ Aucune station traitée")
+    else:
+        # Distribution des décalages
+        dec = df_out["decalage_j"].dropna()
+        print(f"\n  Décalages appliqués : médiane={dec.median():.0f}j | "
+              f"min={dec.min():.0f}j | max={dec.max():.0f}j")
+        for col, label in [
+            ("nse_dahiti_ins", "DAHITI ↔ insitu        "),
+            ("nse_modele_ins", "Modèle(DAHITI) ↔ insitu"),
+            ("nse_modele_da",  "Modèle ↔ DAHITI        "),
+        ]:
+            v = df_out[col].dropna()
+            print(f"\n    {label} (n={len(v)})")
+            print(f"      NSE médian : {v.median():.3f}")
+            print(f"      NSE moyen  : {v.mean():.3f}")
+            print(f"      NSE > 0.5  : {(v > 0.5).sum()} ({(v > 0.5).mean():.0%})")
+            print(f"      NSE < 0    : {(v < 0).sum()} ({(v < 0).mean():.0%})")
+
+    return df_out
 
 
 # ═══════════════════════════════════════════════════════════════
-# MAIN
+# LANCEMENT
 # ═══════════════════════════════════════════════════════════════
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--freq", type=str, default="all",
-                        choices=["27j", "10j", "all"])
-    parser.add_argument("--only_station", type=str, default=None)
-    args = parser.parse_args()
+df_27 = run_freq(STATIONS_27J, RESIDUALS_27J, "27j", window_insitu=14)
+df_10 = run_freq(STATIONS_10J, RESIDUALS_10J, "10j", window_insitu=5)
 
-    only = args.only_station.zfill(13) if args.only_station else None
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+# ═══════════════════════════════════════════════════════════════
+# FIGURE GLOBALE — boxplots comparatifs
+# ═══════════════════════════════════════════════════════════════
+rng = np.random.default_rng(42)
 
-    if args.freq in ("27j", "all"):
-        generate_plots_for_freq(STATIONS_27J, RESIDUALS_27J, "27j",
-                                WINDOW_27J, only)
-    if args.freq in ("10j", "all"):
-        generate_plots_for_freq(STATIONS_10J, RESIDUALS_10J, "10j",
-                                WINDOW_10J, only)
+fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+fig.suptitle(
+    "Benchmark NSE vs Insitu — DAHITI & Modèle AR-LSTM\n"
+    "(décalage temporel corrigé par station)",
+    fontsize=12, fontweight="bold"
+)
+
+C_DA  = "#27ae60"
+C_MOD = "#c0392b"
+
+for ax, (df, freq) in zip(axes, [(df_27, "27j"), (df_10, "10j")]):
+    if len(df) == 0:
+        continue
+    data = {
+        "DAHITI" : (df["nse_dahiti_ins"].dropna().values, C_DA),
+        "Modèle" : (df["nse_modele_ins"].dropna().values, C_MOD),
+    }
+    labels = list(data.keys())
+    vals   = [data[l][0] for l in labels]
+    colors = [data[l][1] for l in labels]
+
+    bp = ax.boxplot(vals, tick_labels=labels, patch_artist=True,
+                    medianprops={"color": "black", "linewidth": 2},
+                    widths=0.45)
+    for box, color in zip(bp["boxes"], colors):
+        box.set_facecolor(color)
+        box.set_alpha(0.65)
+
+    for j, (v, color) in enumerate(zip(vals, colors), 1):
+        jitter = rng.uniform(-0.12, 0.12, len(v))
+        ax.scatter(np.full(len(v), j) + jitter, v,
+                   alpha=0.35, s=14, color=color, zorder=3)
+        med = np.nanmedian(v)
+        ax.text(j, med + 0.03, f"{med:.3f}", ha="center",
+                fontsize=9, fontweight="bold")
+
+    ax.axhline(0,   color="red",   lw=1, ls="--", alpha=0.5, label="NSE=0")
+    ax.axhline(0.5, color="green", lw=1, ls="--", alpha=0.5, label="NSE=0.5")
+    ax.set_title(f"{freq}  (n={len(df)} stations)", fontsize=11, fontweight="bold")
+    ax.set_ylabel("NSE ↔ insitu")
+    ax.grid(True, alpha=0.25, axis="y")
+    ax.legend(fontsize=8)
+
+plt.tight_layout()
+fig_path = OUTPUT_DIR / "benchmark_global_dahiti.png"
+fig.savefig(fig_path, dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"\n✅ Figure globale → {fig_path}")

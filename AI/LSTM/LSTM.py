@@ -32,7 +32,7 @@ LR = 0.001
 
 FEATURES = ['h_01h_wsh', 'h_09h_wsh', 'h_17h_wsh',
             'precip_jour', 'temp_min_jour', 'temp_max_jour',
-            'temp_moy_jour', 'temp_moy_10j', 'precip_moy_10j']
+            'temp_moy_jour', 'temp_moy_27j', 'precip_moy_10j']
 TARGET = 'h_09h_wsh'  # valeur à prédire à J+1
 
 

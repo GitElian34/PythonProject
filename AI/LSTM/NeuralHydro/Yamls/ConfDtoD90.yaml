@@ -1,0 +1,106 @@
+experiment_name: arlstm_DtoD90_inputreplacing_synthetic
+dataset: generic
+data_dir: ./data/IA/NeuralHydroDtoD90
+train_basin_file: ./AI/LSTM/NeuralHydroDtoD90/train_basins.txt
+validation_basin_file: ./AI/LSTM/NeuralHydroDtoD90/val_basins.txt
+
+train_start_date: "01/01/2016"
+train_end_date: "31/12/2025"
+validation_start_date: "01/01/2016"
+validation_end_date: "31/12/2025"
+
+num_workers: 4
+cache_validation_data: True
+
+dynamics_embedding:
+  type: fc
+  hiddens: [30, 20]
+  activation: tanh
+  dropout: 0.2
+
+target_variables:
+  - water_level
+
+lagged_features:
+  water_level: [1]
+
+use_frequencies:
+  - 1D
+
+autoregressive_inputs:
+  - water_level_shift1
+
+dynamic_inputs:
+  - ["precipitation_J0"]
+  - ["temperature_J0"]
+  - ["pet_J0"]
+  - ["precip_mean_J3"]
+  - ["temp_mean_J3"]
+  - ["pet_mean_J3"]
+  - ["precip_mean_J10"]
+  - ["temp_mean_J10"]
+  - ["pet_mean_J10"]
+  - ["precip_max_J10"]
+  - ["precip_last7"]
+  - ["nb_jours_pluie_J10"]
+  - ["snow_depth_J0"]
+  - ["snowmelt_J0"]
+  - ["snow_depth_mean_J3"]
+  - ["snowmelt_mean_J3"]
+  - ["snow_depth_mean_J10"]
+  - ["snowmelt_mean_J10"]
+  - ["clim_mean_20j"]
+  - ["clim_std_20j"]
+  - ["doy_sin", "doy_cos"]   # jamais NaN (dérivées de la date) : regroupées ensemble, sans intérêt à les séparer
+
+static_attributes:
+  - aire_km2
+  - lon
+  - lat
+  - frac_urban
+  - frac_forest
+  - frac_agriculture
+  - sg_clay_0_30cm
+  - sg_sand_0_30cm
+  - sg_silt_0_30cm
+  - strahler
+  - elevation_mean
+  - slope_mean
+
+nan_handling_method: attention
+nan_handling_pos_encoding_size: 8
+#nan_step_probability: 0.05
+#nan_sequence_probability: 0.02
+
+model: arlstm
+head: regression
+hidden_size: 256
+seq_length:
+  1D: 365
+predict_last_n:
+  1D: 1
+
+batch_size: 64
+output_dropout: 0.4
+clip_gradient_norm: 0.8
+target_noise_std: 0.01
+optimizer: AdamW
+learning_rate:
+  0: 0.0006
+  12: 0.0003
+  20: 0.0001
+
+epochs: 30
+loss: NSE
+initial_forget_bias: 3
+save_validation_results: True
+max_updates_per_epoch: 2000
+
+validate_every: 1
+validate_n_random_basins: 100
+metrics:
+  - NSE
+  - KGE
+  - FHV
+
+device: cpu

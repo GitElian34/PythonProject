@@ -8,7 +8,7 @@ Backup le fichier original.
 import random
 from pathlib import Path
 
-TEST_PATH   = Path("./AI/LSTM/NeuralHydro_feat10j/val_basins.txt")
+TEST_PATH   = Path("./AI/LSTM/NeuralHydro_feat27j/val_basins.txt")
 TEST_BAK    = Path("./AI/LSTM/NeuralHydro_feat10j/val_basins_FULL.txt")
 N_STATIONS  = 200
 SEED        = 42

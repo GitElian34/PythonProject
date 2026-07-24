@@ -27,12 +27,20 @@ MODEL  = "arlstm_feat10jLow_modele2_0605_140952"
 
 EPOCH  = 7
 
+# MODEL  = "arlstm_feat27jHigh_modele2_0206_145147"  # ← modèle 27j (pas 10j !)
+# EPOCH  = 27
+
 PERIOD = "validation"
 
 RUN_DIR       = Path(f"./runs/{MODEL}")
-STATIONS_FILE = Path("./data/IA/NeuralHydrologyDahitiFull/stations_dahiti_10j.txt")
-DATA_DIR      = Path("./data/IA/NeuralHydrologyDahitiFull/10j")
-OUT_CSV       = Path("./data/outlier_detection/residuals_10j_dahiti.csv")
+STATIONS_FILE = Path("./data/IA/NeuralHydrologyDahiti10jClean/stations_dahiti_10j.txt")
+DATA_DIR      = Path("./data/IA/NeuralHydrologyDahiti10jClean/10j")
+OUT_CSV       = Path("./data/outlier_detection/residuals_10j_dahiti_clean.csv")
+#
+# STATIONS_FILE = Path("./data/IA/NeuralHydrologyDahiti27jClean/stations_dahiti_27j.txt")
+# DATA_DIR      = Path("./data/IA/NeuralHydrologyDahiti27jClean/27j")
+# OUT_CSV       = Path("./data/outlier_detection/residuals_27j_dahiti_clean.csv")
+
 TARGET_VAR    = "water_level"
 
 OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
@@ -51,7 +59,9 @@ print("=" * 60)
 ryaml = YAML()
 ryaml.preserve_quotes = True
 config_path = RUN_DIR / "config.yml"
-config_eval = RUN_DIR / "config_eval_dahiti_10j.yml"
+#
+config_eval = RUN_DIR / "config_eval_dahiti_10j_clean.yml"
+# config_eval   = RUN_DIR / "config_eval_dahiti_27j_clean.yml"
 
 with open(config_path) as f:
     cfg_dict = ryaml.load(f)

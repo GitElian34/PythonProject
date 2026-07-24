@@ -53,8 +53,9 @@ log = logging.getLogger("step1_hw_next")
 # ═══════════════════════════════════════════════════════════════
 API_KEY         = "AJerWWCpm4wIaH8CMgPZlf67hNBC0VRMeCeeB1KgkaDHctfvYP"
 COLLECTION_ID   = "HYDROWEB_RIVERS_OPE"
-DEFAULT_DB_PATH = Path("./data/hydroweb_next.db")
-DEFAULT_BBOX    = [-5.5, 41.0, 9.5, 51.5]   # France métropolitaine
+DEFAULT_DB_PATH = Path("./data/hydroweb_next_Allemagne.db")
+# DEFAULT_BBOX    = [-5.5, 41.0, 9.5, 51.5]# France métropolitaine
+DEFAULT_BBOX = [5.5, 47.0, 15.5, 55.5] #Allemagne
 DOWNLOAD_DIR    = Path("./data/hydroweb_next/downloads")
 MIN_MEASUREMENTS = 5
 
