@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════
 # EXPERIMENT
 # ═══════════════════════════════════════════════
-experiment_name: arlstm_DtoD80_quantile
+experiment_name: arlstm_DtoD80_quantile_attention_Final
 
 # ═══════════════════════════════════════════════
 # DATASET
@@ -46,29 +46,31 @@ use_frequencies:
 autoregressive_inputs:
   - water_level_shift1
 
+# ── Passé en liste de listes (un groupe par variable) : requis par
+#    nan_handling_method, sinon une seule variable dynamique manquante
+#    invalide tout le groupe entier.
 dynamic_inputs:
-  - precipitation_J0
-  - temperature_J0
-  - pet_J0
-  - precip_mean_J3
-  - temp_mean_J3
-  - pet_mean_J3
-  - precip_mean_J10
-  - temp_mean_J10
-  - pet_mean_J10
-  - precip_max_J10
-  - precip_last7
-  - nb_jours_pluie_J10
-  - snow_depth_J0
-  - snowmelt_J0
-  - snow_depth_mean_J3
-  - snowmelt_mean_J3
-  - snow_depth_mean_J10
-  - snowmelt_mean_J10
-  - clim_mean_20j
-  - clim_std_20j
-  - doy_sin
-  - doy_cos
+  - ["precipitation_J0"]
+  - ["temperature_J0"]
+  - ["pet_J0"]
+  - ["precip_mean_J3"]
+  - ["temp_mean_J3"]
+  - ["pet_mean_J3"]
+  - ["precip_mean_J10"]
+  - ["temp_mean_J10"]
+  - ["pet_mean_J10"]
+  - ["precip_max_J10"]
+  - ["precip_last7"]
+  - ["nb_jours_pluie_J10"]
+  - ["snow_depth_J0"]
+  - ["snowmelt_J0"]
+  - ["snow_depth_mean_J3"]
+  - ["snowmelt_mean_J3"]
+  - ["snow_depth_mean_J10"]
+  - ["snowmelt_mean_J10"]
+  - ["clim_mean_20j"]
+  - ["clim_std_20j"]
+  - ["doy_sin", "doy_cos"]
 
 static_attributes:
   - aire_km2
@@ -83,6 +85,10 @@ static_attributes:
   - strahler
   - elevation_mean
   - slope_mean
+
+# ── Ajout attention ──────────────────────────────
+nan_handling_method: attention
+nan_handling_pos_encoding_size: 8
 
 # ═══════════════════════════════════════════════
 # ARCHITECTURE

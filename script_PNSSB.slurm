@@ -52,3 +52,4 @@ export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 source /home/sar_hydro/STUDIES/EtudesEB/PythonProject/.venv/bin/activate
 cd /home/sar_hydro/STUDIES/EtudesEB/PythonProject || exit
 python AI/LSTM/NeuralHydro/Entrainement.py
+#python Pipeline_data/ERA5/getData_ERA5_Land.py

@@ -14,10 +14,19 @@ Orchestre les 5 sous-étapes :
 
 Usage standalone :
     python step2_run_all.py --db ./data/test.db
+    python step2_run_all.py --db ./data/test.db --bbox 5.5 47.0 15.5 55.5
 
 Usage depuis la pipeline :
     from step2_run_all import run_step2
     run_step2(db_path="./data/test.db")
+    run_step2(db_path="./data/test.db", bbox={"left":5.5,"right":15.5,"bottom":47.0,"top":55.5})
+
+⚠️ CHANGEMENT vs version précédente :
+    Le bbox utilisé pour clipper les rasters HydroSHEDS (étape 2a) est
+    maintenant propagé depuis kwargs["bbox"]. S'il n'est pas fourni,
+    step2a le déduit automatiquement des coordonnées des stations en
+    base (voir get_bbox_from_stations dans delineate_bv.py) — donc plus
+    besoin de choisir "France" ou "Allemagne" en dur ici.
 ═══════════════════════════════════════════════════════════════════════════
 """
 
@@ -29,7 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from Pipeline_data.Bassin_Versant.delineate_bv import run_step2a
+from Pipeline_data.Bassin_Versant.delineate_bv import run_step2a, reset_bv_data
 from Pipeline_data.Bassin_Versant.strahler import run_step2b
 from Pipeline_data.Bassin_Versant.elevation_slope import run_step2c
 from Pipeline_data.Bassin_Versant.corine_soilgrids import run_step2d
@@ -54,6 +63,8 @@ def run_step2(db_path: str = "./data/test.db", **kwargs) -> dict:
 
     kwargs optionnels :
         dir_path, acc_path     → step2a
+        bbox                   → step2a (dict {"left","right","bottom","top"}
+                                  ou None = auto-détecté depuis les stations)
         river_atlas_path       → step2b
         dem_path, slope_path   → step2c
         corine_path, soilgrids_dir → step2d
@@ -73,6 +84,7 @@ def run_step2(db_path: str = "./data/test.db", **kwargs) -> dict:
             conn,
             dir_path=kwargs.get("dir_path", DEFAULT_DIR_PATH),
             acc_path=kwargs.get("acc_path", DEFAULT_ACC_PATH),
+            bbox=kwargs.get("bbox", None),
         )
     except Exception as e:
         log.error(f"Étape 2a échouée : {e}")
@@ -159,8 +171,35 @@ def run_step2(db_path: str = "./data/test.db", **kwargs) -> dict:
 # CLI
 # ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Étape 2 — Tous les attributs station")
+    parser = argparse.ArgumentParser(
+        description="Étape 2 — Tous les attributs station",
+        epilog="""
+Exemples :
+  python step2_run_all.py --db ./data/test.db
+      (bbox 2a auto-détecté depuis les stations sans BV en base)
+
+  python step2_run_all.py --db ./data/test.db --bbox 5.5 47.0 15.5 55.5
+      (bbox 2a forcé, ici Allemagne)
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--db", type=str, default="./data/test.db")
+    parser.add_argument("--bbox", type=float, nargs=4, default=None,
+                        metavar=("LEFT", "BOTTOM", "RIGHT", "TOP"),
+                        help="Bbox explicite pour l'étape 2a (défaut : auto-détecté)")
+    parser.add_argument("--reset", action="store_true",
+                        help="Reset bv_data + colonnes dérivées (élévation/Corine) puis quitte, sans relancer l'étape 2")
     args = parser.parse_args()
 
-    run_step2(db_path=args.db)
+    if args.reset:
+        conn = sqlite3.connect(args.db)
+        reset_bv_data(conn)
+        conn.close()
+        raise SystemExit(0)
+
+    bbox = None
+    if args.bbox:
+        left, bottom, right, top = args.bbox
+        bbox = {"left": left, "bottom": bottom, "right": right, "top": top}
+
+    run_step2(db_path=args.db, bbox=bbox)

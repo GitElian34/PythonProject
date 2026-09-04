@@ -1,0 +1,118 @@
+# ═══════════════════════════════════════════════
+# EXPERIMENT
+# ═══════════════════════════════════════════════
+experiment_name: arlstm_feat10j_Final_ModeleT
+
+# ═══════════════════════════════════════════════
+# DATASET
+# ⚠️ NOTE : contrairement au 27j (qui a des dossiers "high" séparés
+# pour train/validation), ici train_basin_file ET validation_basin_file
+# pointent vers le même dossier "NeuralHydro_feat10j_low" — et
+# validation_basin_file == test_basin_file après correction, faute
+# d'un dossier "high" équivalent pour le 10j. Si tu as un split
+# dédié différent pour la validation en cours d'entraînement (autre
+# que "low/val_basins.txt"), dis-le moi et je corrige le chemin.
+# ═══════════════════════════════════════════════
+dataset: generic
+data_dir: data/IA/NeuralHydrology_feat10j
+train_basin_file: AI/LSTM/NeuralHydro_feat10j/train_basins2.txt
+validation_basin_file: AI/LSTM/NeuralHydro_feat10j/val_basins.txt
+test_basin_file: AI/LSTM/NeuralHydro_feat10j/val_basins.txt
+
+# ═══════════════════════════════════════════════
+# PÉRIODES
+# ═══════════════════════════════════════════════
+train_start_date: "01/01/2016"
+train_end_date: "31/12/2025"
+validation_start_date: "01/01/2016"
+validation_end_date: "31/12/2025"
+
+# ═══════════════════════════════════════════════
+# VARIABLES
+# ═══════════════════════════════════════════════
+target_variables:
+  - water_level
+
+# lag-1 dans ce dataset = 10 jours réels (1 point tous les 10j)
+lagged_features:
+  water_level:
+    - 1    # lag-10j réels
+
+autoregressive_inputs:
+  - water_level_shift1
+
+# Modèle "feat10jLow" — J0 + moyennes J3/J10 + climatologie fenêtrée
+dynamic_inputs:
+  - precipitation_J0
+  - temperature_J0
+  - pet_J0
+  - precip_mean_J3
+  - pet_mean_J3
+  - temp_mean_J3
+  - precip_mean_J10
+  - temp_mean_J10
+  - clim_mean_20j
+  - clim_std_20j
+
+static_attributes:
+  - aire_km2
+  - lon
+  - lat
+  - frac_urban
+  - frac_forest
+  - frac_agriculture
+  - sg_clay_0_30cm
+  - sg_sand_0_30cm
+  - sg_silt_0_30cm
+  - strahler
+  - elevation_mean
+  - slope_mean
+
+# ═══════════════════════════════════════════════
+# ARCHITECTURE
+# ═══════════════════════════════════════════════
+model: arlstm
+head: regression
+hidden_size: 256
+seq_length:
+  10D: 36
+predict_last_n:
+  10D: 1
+use_frequencies:
+  - 10D
+
+# ═══════════════════════════════════════════════
+# ENTRAÎNEMENT
+# ═══════════════════════════════════════════════
+batch_size: 64
+output_dropout: 0.4
+optimizer: AdamW
+learning_rate:
+  0: 0.0006
+  12: 0.0003
+  20: 0.0001
+epochs: 30
+
+loss: NSE
+target_noise_std: 0.01
+clip_gradient_norm: 0.8
+
+initial_forget_bias: 3
+save_validation_results: true
+max_updates_per_epoch: 4000
+
+seed: 374540
+
+# ═══════════════════════════════════════════════
+# VALIDATION
+# ═══════════════════════════════════════════════
+validate_every: 1
+validate_n_random_basins: 3000
+metrics:
+  - NSE
+  - KGE
+
+# ═══════════════════════════════════════════════
+# DEVICE
+# ═══════════════════════════════════════════════
+device: cpu

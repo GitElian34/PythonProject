@@ -1,0 +1,130 @@
+# ═══════════════════════════════════════════════
+# EXPERIMENT
+# ═══════════════════════════════════════════════
+experiment_name: arlstm_feat27jFinalModeleT
+
+# ═══════════════════════════════════════════════
+# DATASET
+# ═══════════════════════════════════════════════
+dataset: generic
+data_dir: data/IA/NeuralHydrology_feat27j
+train_basin_file: AI/LSTM/NeuralHydro_feat27j/train_basins2.txt
+validation_basin_file: AI/LSTM/NeuralHydro_feat27j/val_basins.txt
+test_basin_file: AI/LSTM/NeuralHydro_feat27j/val_basins.txt
+
+# ═══════════════════════════════════════════════
+# PÉRIODES
+# ⚠️ NOTE : validation_basin_file pointe maintenant vers un vrai holdout
+# de stations in situ (même dossier que train_basin_file), et non plus
+# vers stations_dahiti_27j.txt — cette dernière liste est réservée à
+# l'évaluation zero-shot finale (généralisation vers l'altimétrie),
+# pas au monitoring pendant l'entraînement.
+train_start_date: "01/01/2016"
+train_end_date: "31/12/2025"
+validation_start_date: "01/01/2016"
+validation_end_date: "31/12/2025"
+
+# ═══════════════════════════════════════════════
+# VARIABLES
+# ═══════════════════════════════════════════════
+target_variables:
+  - water_level
+
+# lag-1 dans ce dataset = 27 jours réels (1 point tous les 27j)
+lagged_features:
+  water_level:
+    - 1    # lag-27j réels
+
+autoregressive_inputs:
+  - water_level_shift1
+
+# Modèle "feat27jHigh" — J0 + moyennes J3/J10/J27 + climatologie fenêtrée
+dynamic_inputs:
+  - precipitation_J0
+  - temperature_J0
+  - pet_J0
+  - precip_mean_J3
+  - pet_mean_J3
+  - temp_mean_J3
+  - precip_mean_J27
+  - precip_mean_J10
+  - temp_mean_J10
+  - clim_mean_20j
+  - clim_std_20j
+  - precip_max_J27
+  - precip_last7
+  - nb_jours_pluie_J27
+  - precip_mean_J14
+
+static_attributes:
+  - aire_km2
+  - lon
+  - lat
+  - frac_urban
+  - frac_forest
+  - frac_agriculture
+  - sg_clay_0_30cm
+  - sg_sand_0_30cm
+  - sg_silt_0_30cm
+  - strahler
+  - elevation_mean
+  - slope_mean
+
+# ═══════════════════════════════════════════════
+# ARCHITECTURE
+# ═══════════════════════════════════════════════
+model: arlstm
+head: regression
+hidden_size: 256
+seq_length:
+  27D: 20
+predict_last_n:
+  27D: 1
+use_frequencies:
+  - 27D
+
+dynamics_embedding:
+  type: fc
+  hiddens:
+    - 30
+    - 20
+  activation: tanh
+  dropout: 0.2
+
+# ═══════════════════════════════════════════════
+# ENTRAÎNEMENT
+# ═══════════════════════════════════════════════
+batch_size: 64
+output_dropout: 0.4
+optimizer: AdamW
+learning_rate:
+  0: 0.0006
+  12: 0.0003
+  20: 0.0001
+epochs: 30
+
+loss: NSE
+target_noise_std: 0.01
+clip_gradient_norm: 0.8
+
+initial_forget_bias: 3
+save_validation_results: true
+max_updates_per_epoch: 5000
+
+seed: 374540
+
+# ═══════════════════════════════════════════════
+# VALIDATION
+# ═══════════════════════════════════════════════
+validate_every: 1
+validate_n_random_basins: 4000
+metrics:
+  - NSE
+  - KGE
+
+# ═══════════════════════════════════════════════
+# DEVICE
+# ═══════════════════════════════════════════════
+device: cpu
+num_workers: 4
+cache_validation_data: true

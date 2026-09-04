@@ -12,7 +12,7 @@ import tempfile
 # PARAMÈTRES
 # ═══════════════════════════════════════════════════════════════
 DB_PATH     = './data/hydro_data.db'
-DIR_PATH    = '/home/sar_hydro/STUDIES/EtudesEB/HydroSHED/other/Fhyd_eu_dir_15s.tif'
+DIR_PATH    = '/home/sar_hydro/STUDIES/EtudesEB/HydroSHED/other/hyd_eu_dir_15s.tif'
 ACC_PATH    = '/home/sar_hydro/STUDIES/EtudesEB/HydroSHED/other/hyd_eu_acc_15s.tif'
 BBOX_FRANCE = {'left': -6.0, 'right': 10.0, 'bottom': 41.0, 'top': 52.0}
 

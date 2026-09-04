@@ -14,4 +14,4 @@ from pathlib import Path
 from neuralhydrology.neuralhydrology.nh_run import start_run
 # start_run(config_file=Path("./AI/LSTM/NeuralHydro/Yamls/NanHandling/ConfDtoD80_Nan_handle.yaml"))
 
-start_run(config_file=Path("./AI/LSTM/NeuralHydro/Yamls/ConfDtoD90.yaml"))
+start_run(config_file=Path("./AI/LSTM/NeuralHydro/Yamls/ConfDtoD96.yaml"))
